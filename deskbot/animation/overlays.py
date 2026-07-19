@@ -1191,15 +1191,21 @@ class Sleep(Overlay):
 
 
 class SpaceGlasses(Overlay):
-    """Deal-with-it sunglasses, but make it space travel: dark reflective
-    lenses sit on the face while a starfield warps past behind/around the
-    head, streaking outward like the bot is rocketing through a field of
-    stars — sky-diving-through-space energy. Head sways gently and a
-    diagonal glint sweeps the lenses now and then."""
+    """Wraparound safety-goggles (single wide lens, padded frame, side
+    straps) drop in from the top and land on the face with a springy
+    overshoot — same beat as putting on protective eyewear. Once worn, a
+    starfield warps past behind/around the head, streaking outward like the
+    bot is rocketing through space, with a glint sweeping the lens now and
+    then."""
+
+    LENS_W, LENS_H = 92, 26     # single wraparound lens
+    PAD = 5                     # padded foam-frame thickness
+    LAND = 0.55
+    COVER_Y = 14
 
     N_STARS = 22
     MAX_R = 72
-    CX, CY = 64, 26
+    CX, CY = 64, EYE_CY
 
     def __init__(self, rng):
         super().__init__(rng)
@@ -1217,52 +1223,81 @@ class SpaceGlasses(Overlay):
             if st["r"] > self.MAX_R:
                 st.update(self._spawn())
 
+    def _gy(self, t):
+        """Goggle center height: eased drop-in with a springy overshoot,
+        then a slow idle sway once worn."""
+        k = min(1.0, t / self.LAND)
+        c1, c3 = 1.70158, 2.70158
+        e = 1 + c3 * (k - 1) ** 3 + c1 * (k - 1) ** 2
+        gy = -40 + e * (EYE_CY + 40)
+        if t > self.LAND + 0.3:
+            gy += math.sin((t - self.LAND) * 2.4) * 1.2
+        return gy
+
     def modify(self, left, right, t):
-        for p in (left, right):
-            p["scale"] = 0.0
+        if self._gy(t) > self.COVER_Y:
+            for p in (left, right):
+                p["scale"] = 0.0
+        else:
+            for p in (left, right):
+                p["top_lid"] = max(p["top_lid"], 0.15)
 
     def draw(self, d, s, t):
-        cx, cy = self.CX, self.CY
-        for st in self.stars:
-            a, r = st["a"], st["r"]
-            trail = 3 + (r / self.MAX_R) * 11
-            x0 = cx + math.cos(a) * r * 1.4
-            y0 = cy + math.sin(a) * r * 0.9
-            x1 = cx + math.cos(a) * (r - trail) * 1.4
-            y1 = cy + math.sin(a) * (r - trail) * 0.9
-            wdt = max(1, int(s * (0.4 + 1.6 * (r / self.MAX_R))))
-            d.line([(x0 * s, y0 * s), (x1 * s, y1 * s)], fill=255, width=wdt)
+        gy = self._gy(t)
+        cx = self.CX
+        hw, hh = self.LENS_W / 2, self.LENS_H / 2
 
-        sway = math.sin(t * 0.8) * 1.6
-        hw, hh = 19.0, 13.5
-        wdt = max(2, int(s * 1.7))
-        for ex in (EYE_L, EYE_R):
-            gy = EYE_CY + sway
-            box = [(ex - hw) * s, (gy - hh) * s, (ex + hw) * s, (gy + hh) * s]
-            d.rounded_rectangle(box, radius=6 * s, fill=0)
-            d.rounded_rectangle(box, radius=6 * s, outline=255, width=wdt)
-        d.line([((EYE_L + hw) * s, (EYE_CY + sway - 5) * s),
-                ((EYE_R - hw) * s, (EYE_CY + sway - 5) * s)], fill=255, width=wdt)
-        d.line([((EYE_L - hw) * s, (EYE_CY + sway - 4) * s), (0, (EYE_CY + sway - 9) * s)],
-               fill=255, width=wdt)
-        d.line([((EYE_R + hw) * s, (EYE_CY + sway - 4) * s), (W * s, (EYE_CY + sway - 9) * s)],
-               fill=255, width=wdt)
+        if t > self.LAND:
+            for st in self.stars:
+                a, r = st["a"], st["r"]
+                trail = 3 + (r / self.MAX_R) * 11
+                x0 = self.CX + math.cos(a) * r * 1.4
+                y0 = self.CY + math.sin(a) * r * 0.9
+                x1 = self.CX + math.cos(a) * (r - trail) * 1.4
+                y1 = self.CY + math.sin(a) * (r - trail) * 0.9
+                wdt = max(1, int(s * (0.4 + 1.6 * (r / self.MAX_R))))
+                d.line([(x0 * s, y0 * s), (x1 * s, y1 * s)], fill=255, width=wdt)
 
-        gp = (t % 2.6) / 2.6
-        if gp < 0.28:
-            sweep = gp / 0.28
-            for ex in (EYE_L, EYE_R):
-                x0, y0 = ex - hw, EYE_CY + sway - hh
-                sx = x0 - 8 + sweep * (hw * 2 + 18)
+        # padded outer frame ring
+        wdt_outer = max(2, int(s * 2.4))
+        obox = [(cx - hw - self.PAD) * s, (gy - hh - self.PAD) * s,
+                (cx + hw + self.PAD) * s, (gy + hh + self.PAD) * s]
+        d.rounded_rectangle(obox, radius=11 * s, outline=255, width=wdt_outer)
+
+        # elastic strap around the head
+        wdt_strap = max(2, int(s * 2.0))
+        d.line([(obox[0], (gy - 2) * s), (0, (gy - 9) * s)], fill=255, width=wdt_strap)
+        d.line([(obox[2], (gy - 2) * s), (W * s, (gy - 9) * s)], fill=255, width=wdt_strap)
+
+        # vent holes on the top edge of the pad
+        for vx in (cx - hw * 0.5, cx + hw * 0.5):
+            d.ellipse([(vx - 1.6) * s, (gy - hh - self.PAD * 0.3) * s,
+                       (vx + 1.6) * s, (gy - hh + self.PAD * 0.7) * s],
+                      outline=255, width=max(1, int(s * 0.8)))
+
+        # single dark wraparound lens
+        ibox = [(cx - hw) * s, (gy - hh) * s, (cx + hw) * s, (gy + hh) * s]
+        d.rounded_rectangle(ibox, radius=8 * s, fill=0)
+        d.rounded_rectangle(ibox, radius=8 * s, outline=255, width=max(2, int(s * 1.3)))
+
+        # periodic diagonal glint sweeping the lens
+        if t > self.LAND + 0.15:
+            gp = ((t - self.LAND - 0.15) % 2.6) / 2.6
+            if gp < 0.28:
+                sweep = gp / 0.28
+                x0, y0 = cx - hw, gy - hh
+                sx = x0 - 10 + sweep * (self.LENS_W + 20)
                 yy = y0 + 2.0
-                while yy < EYE_CY + sway + hh - 1.5:
-                    xx = sx - (yy - y0) * 0.55
-                    if x0 + 2.5 <= xx <= ex + hw - 2.5 - 2.6:
+                while yy < gy + hh - 1.5:
+                    xx = sx - (yy - y0) * 0.5
+                    if x0 + 2.5 <= xx <= cx + hw - 2.5 - 2.6:
                         d.rectangle([xx * s, yy * s, (xx + 2.6) * s, (yy + 1.2) * s],
                                     fill=255)
-                    yy += 1.0
+                    yy += 1.2
 
-        d.line([(57 * s, (52 + sway) * s), (70 * s, (49 + sway) * s)],
+        # smug little smirk
+        d.line([(57 * s, (53 + (gy - EYE_CY) * 0.15) * s),
+                (70 * s, (50 + (gy - EYE_CY) * 0.15) * s)],
                fill=255, width=max(2, int(s * 1.3)))
 
 
