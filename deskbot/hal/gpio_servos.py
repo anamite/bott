@@ -19,16 +19,15 @@ slow head moves but can jitter under CPU load. If jitter shows up, install
 pigpio + run pigpiod and gpiozero will pick it up automatically for real
 hardware PWM on pins 12/13/18/19.
 
-Motion is eased in software: set_pose() only records a target, and
-update(dt) exponentially smooths the commanded angle toward it (a one-pole
-low-pass filter -- fast start, natural deceleration into the target, the
-James Bruton "95% old + 5% new" trick in frame-rate-independent form). A
-deg/s slew cap on top keeps big jumps from slamming the horn. Callers must
-call update(dt) every frame for the servo to actually move.
+Motion is eased in software with a critically-damped second-order filter
+(SmoothDamp): set_pose() only records a target, and update(dt) advances the
+commanded angle toward it through a tracked *velocity*. Because velocity has
+to build up from zero and then bleed back to zero, the move eases BOTH in
+and out -- an S-curve -- unlike a plain low-pass filter, which starts at full
+speed and only eases out. It never overshoots (critically damped) and chases
+a moving target smoothly. Callers must call update(dt) every frame.
 """
 from __future__ import annotations
-
-import math
 
 from .servos import SAFE_RANGES, NEUTRAL, Pose, clamp
 
@@ -40,26 +39,55 @@ PINS: dict[str, int] = {
     "yaw": 18,
 }
 
+JOINTS = ("yaw", "pitch", "roll")
+
+
+def _smooth_damp(cur: float, tgt: float, vel: float, smooth_time: float,
+                 dt: float, max_speed: float) -> tuple[float, float]:
+    """One SmoothDamp step (Game Programming Gems 4 / Unity). Returns the
+    new (position, velocity). Eases in and out, critically damped, no
+    overshoot. `smooth_time` ~= seconds to substantially reach the target."""
+    smooth_time = max(1e-4, smooth_time)
+    omega = 2.0 / smooth_time
+    x = omega * dt
+    exp = 1.0 / (1.0 + x + 0.48 * x * x + 0.235 * x * x * x)
+
+    change = cur - tgt
+    max_change = max_speed * smooth_time
+    change = max(-max_change, min(max_change, change))  # velocity cap
+    tgt_capped = cur - change
+
+    temp = (vel + omega * change) * dt
+    vel = (vel - omega * temp) * exp
+    out = tgt_capped + (change + temp) * exp
+
+    # kill overshoot: if we crossed the real target, snap and stop
+    orig = tgt
+    if (orig - cur > 0.0) == (out > orig):
+        out = orig
+        vel = (out - tgt_capped) / dt if dt > 0 else 0.0
+    return out, vel
+
 
 class GpioServos:
     """Real SG90s driven straight off Pi GPIO pins, with software easing.
 
-    smoothing: 1/s low-pass rate. Higher = snappier, lower = dreamier.
-        6.0 feels organic for head moves (equivalent to ~5-6% new-target
-        weight per 10 ms tick, the ratio Bruton lands on). 2.0 is very
-        sluggish, 15.0 is nearly direct.
-    max_speed: hard deg/s cap layered on the filter so a huge target jump
-        still can't slam the horn at full servo speed.
+    smooth_time: seconds to substantially reach a new target. Bigger =
+        slower, dreamier moves; smaller = snappier. 0.35 feels organic for
+        a head; 0.15 is quick, 0.8 is very languid.
+    max_speed: hard deg/s cap on the eased motion, so even a huge jump
+        can't slam the horn at full servo speed.
     """
 
     def __init__(self, pins: dict[str, int] | None = None,
-                 smoothing: float = 6.0, max_speed: float = 250.0):
+                 smooth_time: float = 0.35, max_speed: float = 250.0):
         from gpiozero import AngularServo
 
-        self.smoothing = smoothing
+        self.smooth_time = smooth_time
         self.max_speed = max_speed
         self.pins = pins or {"roll": PINS["roll"]}
         self._servos: dict[str, AngularServo] = {}
+        self._vel: dict[str, float] = {}
         for joint, pin in self.pins.items():
             lo, hi = SAFE_RANGES[joint]
             # AngularServo is centered on 0; servo-space is 0-180 (90=neutral),
@@ -71,6 +99,7 @@ class GpioServos:
                 min_pulse_width=0.0005,
                 max_pulse_width=0.0024,
             )
+            self._vel[joint] = 0.0
 
         self.pose = Pose()
         self.target = Pose()
@@ -93,19 +122,16 @@ class GpioServos:
         self.relaxed = True
 
     def update(self, dt: float):
-        if self.relaxed:
+        if self.relaxed or dt <= 0:
             return
-        # frame-rate-independent version of "new = 5% target + 95% old":
-        # the blend weight comes from dt, so speed doesn't drift with fps
-        k = 1.0 - math.exp(-dt * self.smoothing)
-        step = self.max_speed * dt
         for joint, servo in self._servos.items():
             cur, tgt = getattr(self.pose, joint), getattr(self.target, joint)
-            d = (tgt - cur) * k
-            d = max(-step, min(step, d))          # slew cap on top
-            cur = cur + d
-            if abs(tgt - cur) < 0.05:             # settle: stop micro-writes
-                cur = tgt
+            if abs(tgt - cur) < 0.05 and abs(self._vel[joint]) < 0.5:
+                self._vel[joint] = 0.0     # settled: stop micro-writes
+                continue
+            cur, self._vel[joint] = _smooth_damp(
+                cur, tgt, self._vel[joint], self.smooth_time, dt,
+                self.max_speed)
             setattr(self.pose, joint, cur)
             servo.angle = cur - 90.0
 
