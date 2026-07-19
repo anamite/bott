@@ -37,6 +37,7 @@ def main():
                 angle = lo
                 direction = 1
             servos.set_pose(roll=angle)
+            servos.update(STEP_DELAY)
             print(f"\r{JOINT} -> {angle:6.1f} deg", end="", flush=True)
             time.sleep(STEP_DELAY)
     except KeyboardInterrupt:

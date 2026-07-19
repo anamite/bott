@@ -62,6 +62,7 @@ def main():
                 until = play_next()
             _, _, groll = gesture_ctl.update(dt)
             servos.set_pose(roll=NEUTRAL + groll)
+            servos.update(dt)
             display.show(eyes.update(dt))
             elapsed = time.monotonic() - now
             time.sleep(max(0.0, 1.0 / TARGET_FPS - elapsed))

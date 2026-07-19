@@ -56,6 +56,7 @@ def main():
                 expression = target
                 eyes.set_expression(expression, duration=PERIOD / 2)
 
+            servos.update(dt)
             display.show(eyes.update(dt))
             elapsed = time.monotonic() - now
             time.sleep(max(0.0, 1.0 / TARGET_FPS - elapsed))

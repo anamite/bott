@@ -18,6 +18,12 @@ gpiozero defaults to software PWM (RPi.GPIO backend), which is fine for
 slow head moves but can jitter under CPU load. If jitter shows up, install
 pigpio + run pigpiod and gpiozero will pick it up automatically for real
 hardware PWM on pins 12/13/18/19.
+
+Motion is slew-rate limited in software (see SimServos in hal.servos --
+same idea, same default speed): set_pose() only records a target, and
+update(dt) steps the commanded angle toward it at a bounded deg/s instead
+of snapping gpiozero's AngularServo.angle straight to the new value.
+Callers must call update(dt) every frame for the servo to actually move.
 """
 from __future__ import annotations
 
@@ -33,11 +39,13 @@ PINS: dict[str, int] = {
 
 
 class GpioServos:
-    """Real SG90s driven straight off Pi GPIO pins."""
+    """Real SG90s driven straight off Pi GPIO pins, with software easing."""
 
-    def __init__(self, pins: dict[str, int] | None = None):
+    def __init__(self, pins: dict[str, int] | None = None,
+                 max_speed: float = 250.0):
         from gpiozero import AngularServo
 
+        self.max_speed = max_speed  # deg/s cap on commanded motion
         self.pins = pins or {"roll": PINS["roll"]}
         self._servos: dict[str, AngularServo] = {}
         for joint, pin in self.pins.items():
@@ -53,18 +61,18 @@ class GpioServos:
             )
 
         self.pose = Pose()
-        self.target = self.pose  # hardware moves on its own; assume commanded
+        self.target = Pose()
         self.relaxed = False
-        self.set_pose(**{joint: NEUTRAL for joint in self.pins})
+        for joint in self.pins:
+            self._servos[joint].angle = NEUTRAL - 90.0  # snap to start pose once
 
     def set_pose(self, yaw: float | None = None, pitch: float | None = None,
                  roll: float | None = None):
+        """Record a target; call update(dt) every frame to actually move."""
         for joint, val in (("yaw", yaw), ("pitch", pitch), ("roll", roll)):
             if val is None or joint not in self._servos:
                 continue
-            a = clamp(joint, val)
-            self._servos[joint].angle = a - 90.0
-            setattr(self.pose, joint, a)
+            setattr(self.target, joint, clamp(joint, val))
         self.relaxed = False
 
     def relax(self):
@@ -73,7 +81,15 @@ class GpioServos:
         self.relaxed = True
 
     def update(self, dt: float):
-        pass  # physical servos move themselves
+        if self.relaxed:
+            return
+        step = self.max_speed * dt
+        for joint, servo in self._servos.items():
+            cur, tgt = getattr(self.pose, joint), getattr(self.target, joint)
+            d = tgt - cur
+            cur = tgt if abs(d) <= step else cur + step * (1 if d > 0 else -1)
+            setattr(self.pose, joint, cur)
+            servo.angle = cur - 90.0
 
     def close(self):
         self.relax()
