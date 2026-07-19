@@ -86,3 +86,18 @@ python test_oled.py hearts     # hold one animation
 - **Choppy animation** — baudrate line from step 2 missing, or still 100000.
 - **Display glitches when servos run later** — power dip; that's why the
   servos get their own 5V supply (see PLAN.md).
+- **`i2cdetect: command not found`** — the `i2c-tools` package isn't
+  installed:
+  ```bash
+  sudo apt update && sudo apt install -y i2c-tools
+  ```
+- **`PermissionError: [Errno 13] Permission denied: '/dev/i2c-1'`** — your
+  user isn't in the `i2c` group yet, so it can't open the I2C device node:
+  ```bash
+  sudo usermod -aG i2c $USER
+  sudo reboot     # group membership only takes effect after a fresh login
+  ```
+  After the reboot, re-activate the venv and re-run `python test_oled.py` —
+  no `sudo` needed. (In a pinch, `sudo ~/botenv/bin/python test_oled.py`
+  works immediately without a reboot, but fixing group membership is the
+  permanent solution.)
