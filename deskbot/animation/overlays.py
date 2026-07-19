@@ -1111,6 +1111,161 @@ class Drink(Overlay):
             self._glass(d, s, _ease_out(k) * 28, 0.0, t)
 
 
+class Hypnotized(Overlay):
+    """Classic hypnosis gag: the eyes hide and are replaced by tight spirals
+    that spin continuously, growing outward from the center like a swirl
+    pattern. A gentle bob keeps it feeling alive rather than static."""
+
+    TURNS = 2.3
+    RATE = 3.6      # rotations per second
+
+    def modify(self, left, right, t):
+        for p in (left, right):
+            p["scale"] = 0.0
+
+    def _spiral(self, d, cx, cy, r, phase, s):
+        steps = 34
+        pts = []
+        for i in range(steps + 1):
+            frac = i / steps
+            ang = phase + frac * self.TURNS * 2 * math.pi
+            rad = r * frac
+            pts.append(((cx + math.cos(ang) * rad) * s,
+                        (cy + math.sin(ang) * rad * 0.88) * s))
+        d.line(pts, fill=255, width=max(2, int(s * 1.3)))
+
+    def draw(self, d, s, t):
+        bob = math.sin(t * 1.4) * 1.2
+        phase = t * self.RATE * 2 * math.pi
+        for ex in (EYE_L, EYE_R):
+            cy = EYE_CY + bob
+            r = 15.5
+            d.ellipse([(ex - r) * s, (cy - r * 0.88) * s,
+                       (ex + r) * s, (cy + r * 0.88) * s],
+                      outline=255, width=max(2, int(s * 1.1)))
+            self._spiral(d, ex, cy, r - 2.0, phase, s)
+            d.ellipse([(ex - 1.4) * s, (cy - 1.4) * s,
+                       (ex + 1.4) * s, (cy + 1.4) * s], fill=255)
+        # slack, dazed half-open mouth
+        d.line([(58 * s, (54 + bob) * s), (70 * s, (54 + bob) * s)],
+               fill=255, width=max(2, int(s * 1.3)))
+
+
+def _zed(d, cx, cy, size, s):
+    cx, cy, size = cx * s, cy * s, size * s
+    w, h = size * 0.5, size * 0.5
+    wdt = max(1, int(s * 0.5))
+    d.line([(cx - w, cy - h), (cx + w, cy - h)], fill=255, width=wdt)
+    d.line([(cx + w, cy - h), (cx - w, cy + h)], fill=255, width=wdt)
+    d.line([(cx - w, cy + h), (cx + w, cy + h)], fill=255, width=wdt)
+
+
+class Sleep(Overlay):
+    """Cute, peaceful sleeping: the real eyes hide behind soft closed-eye
+    arcs, the whole face breathes with a slow bob, and a little stream of
+    "Z"s drifts up and away, growing as they rise. Restful, not the CRT
+    power-down look of the 'sleep' expression."""
+
+    def modify(self, left, right, t):
+        for p in (left, right):
+            p["scale"] = 0.0
+
+    def draw(self, d, s, t):
+        bob = math.sin(t * 1.1) * 1.6
+        wdt = max(2, int(s * 1.6))
+        for ex in (EYE_L, EYE_R):
+            cy = EYE_CY + 5 + bob
+            w = 15
+            d.arc([(ex - w / 2) * s, (cy - 7) * s,
+                   (ex + w / 2) * s, (cy + 9) * s],
+                  200, 340, fill=255, width=wdt)
+        _smile(d, 64, 52 + bob, 10, s)
+        for i in range(3):
+            ph = (t * 0.45 + i / 3.0) % 1.0
+            if ph < 0.88:
+                k = ph / 0.88
+                x = 92 + i * 4 + k * 12
+                y = 16 - k * 24 + bob
+                sz = 3.5 + k * 5.5
+                _zed(d, x, y, sz, s)
+
+
+class SpaceGlasses(Overlay):
+    """Deal-with-it sunglasses, but make it space travel: dark reflective
+    lenses sit on the face while a starfield warps past behind/around the
+    head, streaking outward like the bot is rocketing through a field of
+    stars — sky-diving-through-space energy. Head sways gently and a
+    diagonal glint sweeps the lenses now and then."""
+
+    N_STARS = 22
+    MAX_R = 72
+    CX, CY = 64, 26
+
+    def __init__(self, rng):
+        super().__init__(rng)
+        self.stars = [self._spawn(warm=True) for _ in range(self.N_STARS)]
+
+    def _spawn(self, warm=False):
+        r = self.rng
+        return {"a": r.uniform(0, 2 * math.pi),
+                "r": r.uniform(0, self.MAX_R) if warm else r.uniform(0, 4),
+                "sp": r.uniform(26, 60)}
+
+    def step(self, dt):
+        for st in self.stars:
+            st["r"] += st["sp"] * dt
+            if st["r"] > self.MAX_R:
+                st.update(self._spawn())
+
+    def modify(self, left, right, t):
+        for p in (left, right):
+            p["scale"] = 0.0
+
+    def draw(self, d, s, t):
+        cx, cy = self.CX, self.CY
+        for st in self.stars:
+            a, r = st["a"], st["r"]
+            trail = 3 + (r / self.MAX_R) * 11
+            x0 = cx + math.cos(a) * r * 1.4
+            y0 = cy + math.sin(a) * r * 0.9
+            x1 = cx + math.cos(a) * (r - trail) * 1.4
+            y1 = cy + math.sin(a) * (r - trail) * 0.9
+            wdt = max(1, int(s * (0.4 + 1.6 * (r / self.MAX_R))))
+            d.line([(x0 * s, y0 * s), (x1 * s, y1 * s)], fill=255, width=wdt)
+
+        sway = math.sin(t * 0.8) * 1.6
+        hw, hh = 19.0, 13.5
+        wdt = max(2, int(s * 1.7))
+        for ex in (EYE_L, EYE_R):
+            gy = EYE_CY + sway
+            box = [(ex - hw) * s, (gy - hh) * s, (ex + hw) * s, (gy + hh) * s]
+            d.rounded_rectangle(box, radius=6 * s, fill=0)
+            d.rounded_rectangle(box, radius=6 * s, outline=255, width=wdt)
+        d.line([((EYE_L + hw) * s, (EYE_CY + sway - 5) * s),
+                ((EYE_R - hw) * s, (EYE_CY + sway - 5) * s)], fill=255, width=wdt)
+        d.line([((EYE_L - hw) * s, (EYE_CY + sway - 4) * s), (0, (EYE_CY + sway - 9) * s)],
+               fill=255, width=wdt)
+        d.line([((EYE_R + hw) * s, (EYE_CY + sway - 4) * s), (W * s, (EYE_CY + sway - 9) * s)],
+               fill=255, width=wdt)
+
+        gp = (t % 2.6) / 2.6
+        if gp < 0.28:
+            sweep = gp / 0.28
+            for ex in (EYE_L, EYE_R):
+                x0, y0 = ex - hw, EYE_CY + sway - hh
+                sx = x0 - 8 + sweep * (hw * 2 + 18)
+                yy = y0 + 2.0
+                while yy < EYE_CY + sway + hh - 1.5:
+                    xx = sx - (yy - y0) * 0.55
+                    if x0 + 2.5 <= xx <= ex + hw - 2.5 - 2.6:
+                        d.rectangle([xx * s, yy * s, (xx + 2.6) * s, (yy + 1.2) * s],
+                                    fill=255)
+                    yy += 1.0
+
+        d.line([(57 * s, (52 + sway) * s), (70 * s, (49 + sway) * s)],
+               fill=255, width=max(2, int(s * 1.3)))
+
+
 class Hack(Overlay):
     """The whole face powers down CRT-style — both eyes squash into a line
     that shrinks to a dot — then a little terminal window boots up in its
@@ -1293,4 +1448,7 @@ ANIMATIONS: dict[str, tuple[str, dict | None, type[Overlay]]] = {
     "freeze":    ("sad", {"h": 36.0}, Freeze),
     "drink":     ("happy", {"dy": -2.0}, Drink),
     "hack":      ("neutral", None, Hack),
+    "hypno":     ("neutral", None, Hypnotized),
+    "sleep":     ("neutral", None, Sleep),
+    "space":     ("neutral", None, SpaceGlasses),
 }
