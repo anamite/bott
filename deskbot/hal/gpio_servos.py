@@ -19,13 +19,16 @@ slow head moves but can jitter under CPU load. If jitter shows up, install
 pigpio + run pigpiod and gpiozero will pick it up automatically for real
 hardware PWM on pins 12/13/18/19.
 
-Motion is slew-rate limited in software (see SimServos in hal.servos --
-same idea, same default speed): set_pose() only records a target, and
-update(dt) steps the commanded angle toward it at a bounded deg/s instead
-of snapping gpiozero's AngularServo.angle straight to the new value.
-Callers must call update(dt) every frame for the servo to actually move.
+Motion is eased in software: set_pose() only records a target, and
+update(dt) exponentially smooths the commanded angle toward it (a one-pole
+low-pass filter -- fast start, natural deceleration into the target, the
+James Bruton "95% old + 5% new" trick in frame-rate-independent form). A
+deg/s slew cap on top keeps big jumps from slamming the horn. Callers must
+call update(dt) every frame for the servo to actually move.
 """
 from __future__ import annotations
+
+import math
 
 from .servos import SAFE_RANGES, NEUTRAL, Pose, clamp
 
@@ -39,13 +42,22 @@ PINS: dict[str, int] = {
 
 
 class GpioServos:
-    """Real SG90s driven straight off Pi GPIO pins, with software easing."""
+    """Real SG90s driven straight off Pi GPIO pins, with software easing.
+
+    smoothing: 1/s low-pass rate. Higher = snappier, lower = dreamier.
+        6.0 feels organic for head moves (equivalent to ~5-6% new-target
+        weight per 10 ms tick, the ratio Bruton lands on). 2.0 is very
+        sluggish, 15.0 is nearly direct.
+    max_speed: hard deg/s cap layered on the filter so a huge target jump
+        still can't slam the horn at full servo speed.
+    """
 
     def __init__(self, pins: dict[str, int] | None = None,
-                 max_speed: float = 250.0):
+                 smoothing: float = 6.0, max_speed: float = 250.0):
         from gpiozero import AngularServo
 
-        self.max_speed = max_speed  # deg/s cap on commanded motion
+        self.smoothing = smoothing
+        self.max_speed = max_speed
         self.pins = pins or {"roll": PINS["roll"]}
         self._servos: dict[str, AngularServo] = {}
         for joint, pin in self.pins.items():
@@ -83,11 +95,17 @@ class GpioServos:
     def update(self, dt: float):
         if self.relaxed:
             return
+        # frame-rate-independent version of "new = 5% target + 95% old":
+        # the blend weight comes from dt, so speed doesn't drift with fps
+        k = 1.0 - math.exp(-dt * self.smoothing)
         step = self.max_speed * dt
         for joint, servo in self._servos.items():
             cur, tgt = getattr(self.pose, joint), getattr(self.target, joint)
-            d = tgt - cur
-            cur = tgt if abs(d) <= step else cur + step * (1 if d > 0 else -1)
+            d = (tgt - cur) * k
+            d = max(-step, min(step, d))          # slew cap on top
+            cur = cur + d
+            if abs(tgt - cur) < 0.05:             # settle: stop micro-writes
+                cur = tgt
             setattr(self.pose, joint, cur)
             servo.angle = cur - 90.0
 
