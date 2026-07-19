@@ -2,6 +2,7 @@
 
     python test_oled.py                  # auto-cycle all expressions + animations
     python test_oled.py happy            # hold one expression/animation
+    python test_oled.py --step           # press Enter to step through them one by one
     python test_oled.py --list           # show available names
     python test_oled.py --driver ssd1306 # if sh1106 output looks shifted/garbled
 
@@ -10,13 +11,25 @@ Needs: pip install luma.oled pillow   (no pygame required on the Pi)
 from __future__ import annotations
 
 import argparse
+import queue
 import random
+import threading
 import time
 
 from deskbot.animation.eyes import EXPRESSIONS, EyeController
 from deskbot.animation.overlays import ANIMATIONS
 
 ALL_NAMES = list(EXPRESSIONS) + list(ANIMATIONS)
+
+
+def enter_key_listener(q: "queue.Queue[None]"):
+    """Runs in a background thread; pushes an item each time Enter is pressed."""
+    while True:
+        try:
+            input()
+        except EOFError:
+            return
+        q.put(None)
 
 
 def make_display(driver: str, address: int):
@@ -42,6 +55,8 @@ def main():
     ap.add_argument("--driver", default="sh1106", choices=["sh1106", "ssd1306"])
     ap.add_argument("--address", default="0x3C")
     ap.add_argument("--list", action="store_true")
+    ap.add_argument("--step", action="store_true",
+                     help="press Enter to step through expressions/animations one at a time")
     args = ap.parse_args()
 
     if args.list:
@@ -56,19 +71,34 @@ def main():
     if args.name:
         play(ctrl, args.name)
 
+    step_index = -1
+    key_queue: "queue.Queue[None]" = queue.Queue()
+    if args.step and args.name is None:
+        threading.Thread(target=enter_key_listener, args=(key_queue,), daemon=True).start()
+
     switch_at = time.monotonic() + 4.0
     last = time.monotonic()
     frames = 0
     fps_at = last + 5.0
 
-    print("running — Ctrl+C to stop")
+    if args.step and args.name is None:
+        print("running — press Enter to step, Ctrl+C to stop")
+    else:
+        print("running — Ctrl+C to stop")
     try:
         while True:
             now = time.monotonic()
             dt = min(now - last, 0.1)
             last = now
 
-            if args.name is None and now >= switch_at:
+            if args.step and args.name is None:
+                try:
+                    key_queue.get_nowait()
+                    step_index = (step_index + 1) % len(ALL_NAMES)
+                    play(ctrl, ALL_NAMES[step_index])
+                except queue.Empty:
+                    pass
+            elif args.name is None and now >= switch_at:
                 switch_at = now + random.uniform(3.0, 5.0)
                 play(ctrl, random.choice(ALL_NAMES))
 
