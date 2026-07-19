@@ -1,13 +1,20 @@
-"""Slow, peaceful idle animation: OLED eyes + roll servo, paired together.
+"""Peaceful idle: OLED eyes + roll servo driven from ONE breathing clock.
 
-Only the roll servo is wired right now (GPIO12, direct -- see
-deskbot/hal/gpio_servos.py). This drives a gentle, continuous sway synced
-to a slow breathing-style eye cycle so the two channels read as one calm
-performance instead of two independent loops. Run on the Pi:
+The whole point here is that the head and the face read as a single calm
+creature, not two loops running side by side. A single slow "breath" phase
+drives both:
+
+  * the head gently sways left/right on the roll servo, and
+  * the eyes lean their gaze the same way the head tilts,
+
+so the two channels are phase-locked by construction. The eye engine's own
+soft blinks and breathing ride on top. The servo eases itself on a
+background thread, so its motion stays smooth even though the OLED refresh
+is comparatively slow.
 
     python tools/test_animation.py
 
-Ctrl+C to stop -- display and servo are both released cleanly on exit.
+Ctrl+C to stop -- display and servo are released cleanly on exit.
 """
 from __future__ import annotations
 
@@ -24,19 +31,20 @@ from deskbot.hal.gpio_servos import GpioServos
 from deskbot.hal.servos import NEUTRAL
 
 ROLL_PIN = 12
-PERIOD = 7.0          # seconds per full sway cycle -- slow and calm
-ROLL_AMPLITUDE = 8.0  # degrees either side of neutral, gentle not dramatic
-TARGET_FPS = 40        # frame cap; real dt is measured, not assumed
+BREATH_PERIOD = 6.0     # seconds per full sway cycle -- slow = calm
+ROLL_AMPLITUDE = 6.0    # degrees either side of neutral -- gentle
+GAZE_LEAN = 4.0         # px the eyes drift toward the tilt direction
+TARGET_FPS = 40
 
 
 def main():
     display = auto_display()
-    servos = GpioServos({"roll": ROLL_PIN})
+    # dreamy easing; servo self-updates on its own thread
+    servos = GpioServos({"roll": ROLL_PIN}, smooth_time=0.5)
     eyes = EyeController(idle=True)
 
-    print("peaceful idle animation running -- Ctrl+C to stop")
+    print("peaceful idle running -- Ctrl+C to stop")
     t = 0.0
-    expression = "neutral"
     last = time.monotonic()
     try:
         while True:
@@ -45,23 +53,15 @@ def main():
             last = now
             t += dt
 
-            phase = (t % PERIOD) / PERIOD
-            wave = math.sin(2 * math.pi * phase)
+            # one clock -> both channels, so they can't drift apart
+            wave = math.sin(2 * math.pi * t / BREATH_PERIOD)   # -1..1 breath
             servos.set_pose(roll=NEUTRAL + ROLL_AMPLITUDE * wave)
+            eyes.look_at(GAZE_LEAN * wave, 0.0)   # eyes lean into the tilt
 
-            # eyes drift between neutral and a soft droop on the same
-            # rhythm as the sway, so face + neck read as one slow breath
-            target = "sleepy" if wave > 0 else "neutral"
-            if target != expression:
-                expression = target
-                eyes.set_expression(expression, duration=PERIOD / 2)
-
-            servos.update(dt)
             display.show(eyes.update(dt))
-            elapsed = time.monotonic() - now
-            time.sleep(max(0.0, 1.0 / TARGET_FPS - elapsed))
+            time.sleep(max(0.0, 1.0 / TARGET_FPS - (time.monotonic() - now)))
     except KeyboardInterrupt:
-        print("\nstopping, relaxing servo")
+        print("\nstopping")
     finally:
         servos.close()
         display.close()

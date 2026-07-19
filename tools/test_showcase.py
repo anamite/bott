@@ -32,7 +32,8 @@ TARGET_FPS = 40   # frame cap; real dt is measured, not assumed
 
 def main():
     display = auto_display()
-    servos = GpioServos({"roll": ROLL_PIN})
+    # snappy easing: gestures are already shaped, just de-step the servo
+    servos = GpioServos({"roll": ROLL_PIN}, smooth_time=0.12)
     eyes = EyeController(idle=True)
     gesture_ctl = GestureController()
     led = SimLed()
@@ -61,8 +62,7 @@ def main():
                 eyes.set_expression("neutral")
                 until = play_next()
             _, _, groll = gesture_ctl.update(dt)
-            servos.set_pose(roll=NEUTRAL + groll)
-            servos.update(dt)
+            servos.set_pose(roll=NEUTRAL + groll)   # servo eases on its thread
             display.show(eyes.update(dt))
             elapsed = time.monotonic() - now
             time.sleep(max(0.0, 1.0 / TARGET_FPS - elapsed))
