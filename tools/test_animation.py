@@ -26,7 +26,7 @@ from deskbot.hal.servos import NEUTRAL
 ROLL_PIN = 12
 PERIOD = 7.0          # seconds per full sway cycle -- slow and calm
 ROLL_AMPLITUDE = 8.0  # degrees either side of neutral, gentle not dramatic
-FPS = 40
+TARGET_FPS = 40        # frame cap; real dt is measured, not assumed
 
 
 def main():
@@ -37,9 +37,12 @@ def main():
     print("peaceful idle animation running -- Ctrl+C to stop")
     t = 0.0
     expression = "neutral"
+    last = time.monotonic()
     try:
         while True:
-            dt = 1.0 / FPS
+            now = time.monotonic()
+            dt = now - last
+            last = now
             t += dt
 
             phase = (t % PERIOD) / PERIOD
@@ -54,7 +57,8 @@ def main():
                 eyes.set_expression(expression, duration=PERIOD / 2)
 
             display.show(eyes.update(dt))
-            time.sleep(dt)
+            elapsed = time.monotonic() - now
+            time.sleep(max(0.0, 1.0 / TARGET_FPS - elapsed))
     except KeyboardInterrupt:
         print("\nstopping, relaxing servo")
     finally:

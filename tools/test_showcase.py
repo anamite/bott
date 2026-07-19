@@ -27,7 +27,7 @@ from deskbot.hal.led import SimLed
 from deskbot.hal.servos import NEUTRAL
 
 ROLL_PIN = 12
-FPS = 40
+TARGET_FPS = 40   # frame cap; real dt is measured, not assumed
 
 
 def main():
@@ -39,7 +39,6 @@ def main():
 
     act_names = list(acts.ACTS)
     idx = 0
-    dt = 1.0 / FPS
 
     def play_next() -> float:
         nonlocal idx
@@ -50,16 +49,22 @@ def main():
         return time.monotonic() + run_len
 
     print("showcase running -- Ctrl+C to stop")
+    last = time.monotonic()
     try:
         until = play_next()
         while True:
-            if time.monotonic() >= until:
+            now = time.monotonic()
+            dt = now - last
+            last = now
+
+            if now >= until:
                 eyes.set_expression("neutral")
                 until = play_next()
             _, _, groll = gesture_ctl.update(dt)
             servos.set_pose(roll=NEUTRAL + groll)
             display.show(eyes.update(dt))
-            time.sleep(dt)
+            elapsed = time.monotonic() - now
+            time.sleep(max(0.0, 1.0 / TARGET_FPS - elapsed))
     except KeyboardInterrupt:
         print("\nstopping, relaxing servo")
     finally:
