@@ -16,6 +16,8 @@ Keys:
   P / O       IMU: pick up / put down
   S / T       IMU: shake / tap
   1..8        expressions (neutral happy sad angry surprised sleepy love dizzy)
+  [ / ]       audition acts: prev / next (face + neck gesture + LED together)
+  ENTER       replay current act
   C           clear person             ESC     quit
 """
 from __future__ import annotations
@@ -23,7 +25,9 @@ from __future__ import annotations
 import math
 import pygame
 
+from deskbot.animation import acts
 from deskbot.animation.eyes import EyeController
+from deskbot.animation.gestures import GestureController
 from deskbot.hal.imu import SimImu
 from deskbot.hal.led import SimLed
 from deskbot.hal.radar import SimRadar
@@ -131,12 +135,16 @@ def main():
     imu = SimImu()
     led = SimLed()
     eyes = EyeController()
+    gestures = GestureController()
     led.pulse((30, 120, 140), period=4.0)  # idle teal breathing
 
     follow = True
     manual = [NEUTRAL, NEUTRAL, NEUTRAL]  # yaw, pitch, roll offsets base
     manual_hold = 0.0       # seconds left where manual input overrides follow
     led_idle_at = None      # when to fall back to the idle pulse
+    act_names = list(acts.ACTS)
+    act_idx = 0
+    act_until = None        # when the running act ends and idle is restored
     event_msg, event_until = "", 0.0
     peak_a = 1.0            # decaying peak of |a| so spikes stay visible
     t = 0.0
@@ -145,6 +153,13 @@ def main():
     def flash(msg: str, dur: float = 1.6):
         nonlocal event_msg, event_until
         event_msg, event_until = msg, t + dur
+
+    def play_act():
+        nonlocal act_until, led_idle_at
+        name = act_names[act_idx]
+        act_until = t + acts.play(name, eyes, gestures, led)
+        led_idle_at = None      # act owns the LED until it finishes
+        flash(f"act {act_idx + 1}/{len(act_names)}: {name}", 2.2)
 
     while running:
         dt = clock.tick(50) / 1000.0
@@ -197,6 +212,14 @@ def main():
                 elif ev.key in EXPR_KEYS:
                     eyes.set_expression(EXPR_KEYS[ev.key])
                     flash(f"expression: {EXPR_KEYS[ev.key]}")
+                elif ev.key == pygame.K_LEFTBRACKET:
+                    act_idx = (act_idx - 1) % len(act_names)
+                    play_act()
+                elif ev.key == pygame.K_RIGHTBRACKET:
+                    act_idx = (act_idx + 1) % len(act_names)
+                    play_act()
+                elif ev.key == pygame.K_RETURN:
+                    play_act()
 
         # mouse over radar panel = person; leaving the panel removes them
         mx, my = pygame.mouse.get_pos()
@@ -224,6 +247,12 @@ def main():
             led.pulse((30, 120, 140), period=4.0)
             led_idle_at = None
 
+        # running act finished -> back to neutral face + idle glow
+        if act_until is not None and t >= act_until:
+            act_until = None
+            eyes.set_expression("neutral")
+            led.pulse((30, 120, 140), period=4.0)
+
         # ---- the mini behavior loop (a taste of Phase 2) ----
         targets = radar.read()
         yaw_t, pitch_t = manual[0], manual[1]
@@ -238,8 +267,11 @@ def main():
         # breathing layer on pitch, tiny always-on life
         pitch_t += math.sin(t * 2 * math.pi * 0.25) * 1.5
 
+        # gesture layer: additive offsets, composes with follow/manual
+        gyaw, gpitch, groll = gestures.update(dt)
+
         if not servos.relaxed:  # while relaxed, nothing may re-engage them
-            servos.set_pose(yaw_t, pitch_t, manual[2])
+            servos.set_pose(yaw_t + gyaw, pitch_t + gpitch, manual[2] + groll)
         for dev in (servos, radar, imu, led):
             dev.update(dt)
         sample = imu.read()
@@ -256,10 +288,11 @@ def main():
         mode = ("RELAXED" if servos.relaxed
                 else "manual" if manual_hold > 0
                 else "follow" if follow else "idle")
+        act_hud = act_names[act_idx] + (" *" if act_until is not None else "")
         hud = (f"pose y{servos.pose.yaw:6.1f} p{servos.pose.pitch:6.1f} "
                f"r{servos.pose.roll:6.1f} [{mode}] "
                f"| imu |a| now {sample.accel_mag:4.2f}g peak {peak_a:4.2f}g "
-               f"{sample.temp:4.1f}C | led {led.color}")
+               f"{sample.temp:4.1f}C | led {led.color} | act [{act_hud}]")
         screen.blit(font.render(hud, True, (150, 150, 160)), (10, 8))
         if t < event_until:
             big = pygame.font.SysFont("consolas", 22, bold=True)

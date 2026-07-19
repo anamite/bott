@@ -1112,16 +1112,22 @@ class Drink(Overlay):
 
 
 class Hypnotized(Overlay):
-    """Classic hypnosis gag: the eyes hide and are replaced by tight spirals
-    that spin continuously, growing outward from the center like a swirl
-    pattern. A gentle bob keeps it feeling alive rather than static."""
+    """Classic hypnosis gag: the eyes swirl into tight spirals that spin
+    continuously, growing outward from the center like a swirl pattern
+    instead of popping in instantly. A gentle bob keeps it feeling alive
+    rather than static."""
 
     TURNS = 2.3
     RATE = 3.6      # rotations per second
+    EASE = 0.6      # seconds for the eyes to swirl into the spiral
 
     def modify(self, left, right, t):
+        k = _ease_out(min(1.0, t / self.EASE))
         for p in (left, right):
-            p["scale"] = 0.0
+            # eyes narrow and get pulled toward center as the swirl forms,
+            # then vanish once the spiral has fully grown in
+            p["top_lid"] = max(p["top_lid"], k * 0.5)
+            p["scale"] = 1.0 - k
 
     def _spiral(self, d, cx, cy, r, phase, s):
         steps = 34
@@ -1135,20 +1141,26 @@ class Hypnotized(Overlay):
         d.line(pts, fill=255, width=max(2, int(s * 1.3)))
 
     def draw(self, d, s, t):
+        grow = _ease_out(min(1.0, t / self.EASE))
+        if grow <= 0.02:
+            return
         bob = math.sin(t * 1.4) * 1.2
         phase = t * self.RATE * 2 * math.pi
         for ex in (EYE_L, EYE_R):
             cy = EYE_CY + bob
-            r = 15.5
+            r = 15.5 * grow
             d.ellipse([(ex - r) * s, (cy - r * 0.88) * s,
                        (ex + r) * s, (cy + r * 0.88) * s],
                       outline=255, width=max(2, int(s * 1.1)))
-            self._spiral(d, ex, cy, r - 2.0, phase, s)
+            self._spiral(d, ex, cy, max(0.0, r - 2.0 * grow), phase, s)
             d.ellipse([(ex - 1.4) * s, (cy - 1.4) * s,
                        (ex + 1.4) * s, (cy + 1.4) * s], fill=255)
-        # slack, dazed half-open mouth
-        d.line([(58 * s, (54 + bob) * s), (70 * s, (54 + bob) * s)],
-               fill=255, width=max(2, int(s * 1.3)))
+        # slack, dazed half-open mouth, fading in with the swirl
+        if grow > 0.3:
+            mk = min(1.0, (grow - 0.3) / 0.5)
+            hw = 6 * mk
+            d.line([((64 - hw) * s, (54 + bob) * s), ((64 + hw) * s, (54 + bob) * s)],
+                   fill=255, width=max(2, int(s * 1.3)))
 
 
 def _zed(d, cx, cy, size, s):
@@ -1161,33 +1173,46 @@ def _zed(d, cx, cy, size, s):
 
 
 class Sleep(Overlay):
-    """Cute, peaceful sleeping: the real eyes hide behind soft closed-eye
-    arcs, the whole face breathes with a slow bob, and a little stream of
-    "Z"s drifts up and away, growing as they rise. Restful, not the CRT
-    power-down look of the 'sleep' expression."""
+    """Cute, peaceful sleeping: the real (big) eyes ease shut over ~half a
+    second into soft closed-eye arcs rather than snapping away, the whole
+    face breathes with a slow bob, and a little stream of "Z"s drifts up
+    and away, growing as they rise. Restful, not the CRT power-down look
+    of the 'sleep' expression."""
+
+    EASE = 0.55   # seconds to drift from open eyes into the sleepy arcs
 
     def modify(self, left, right, t):
+        k = _ease_out(min(1.0, t / self.EASE))
         for p in (left, right):
-            p["scale"] = 0.0
+            # droop shut like a slow blink, then shrink away entirely so
+            # the sleepy arcs take over smoothly instead of a hard cut
+            p["top_lid"] = max(p["top_lid"], k * 0.85)
+            p["open"] = p["open"] * (1.0 - k)
+            p["scale"] = 1.0 - k
 
     def draw(self, d, s, t):
+        k = _ease_out(min(1.0, t / self.EASE))
+        if k <= 0.02:
+            return
         bob = math.sin(t * 1.1) * 1.6
         wdt = max(2, int(s * 1.6))
         for ex in (EYE_L, EYE_R):
             cy = EYE_CY + 5 + bob
-            w = 15
-            d.arc([(ex - w / 2) * s, (cy - 7) * s,
-                   (ex + w / 2) * s, (cy + 9) * s],
+            w = 15 * k
+            d.arc([(ex - w / 2) * s, (cy - 7 * k) * s,
+                   (ex + w / 2) * s, (cy + 9 * k) * s],
                   200, 340, fill=255, width=wdt)
-        _smile(d, 64, 52 + bob, 10, s)
-        for i in range(3):
-            ph = (t * 0.45 + i / 3.0) % 1.0
-            if ph < 0.88:
-                k = ph / 0.88
-                x = 92 + i * 4 + k * 12
-                y = 16 - k * 24 + bob
-                sz = 3.5 + k * 5.5
-                _zed(d, x, y, sz, s)
+        _smile(d, 64, 52 + bob, 10 * k, s)
+        if t > self.EASE:
+            zt = t - self.EASE
+            for i in range(3):
+                ph = (zt * 0.45 + i / 3.0) % 1.0
+                if ph < 0.88:
+                    zk = ph / 0.88
+                    x = 92 + i * 4 + zk * 12
+                    y = 16 - zk * 24 + bob
+                    sz = 3.5 + zk * 5.5
+                    _zed(d, x, y, sz, s)
 
 
 class SpaceGlasses(Overlay):
