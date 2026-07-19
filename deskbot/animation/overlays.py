@@ -144,6 +144,18 @@ def _gun(d, cx, cy, size, s, kick=0.0):
     return (bx0 + bl) / s, cy / s
 
 
+def _flake(d, cx, cy, r, s):
+    """Six-arm snowflake with little branch ticks."""
+    cx, cy, r = cx * s, cy * s, r * s
+    wdt = max(1, int(s * 0.55))
+    for i in range(3):
+        a = i * math.pi / 3 + math.pi / 6
+        dx, dy = math.cos(a) * r, math.sin(a) * r
+        d.line([(cx - dx, cy - dy), (cx + dx, cy + dy)], fill=255, width=wdt)
+    q = r * 0.35
+    d.line([(cx - q, cy), (cx + q, cy)], fill=255, width=wdt)
+
+
 def _question(d, cx, cy, size, s):
     cx, cy, size = cx * s, cy * s, size * s
     r = size * 0.30
@@ -666,16 +678,22 @@ class Pew3D(Overlay):
 
 
 class Glasses(Overlay):
-    """Deal-with-it sunglasses drop in from the top, land with a springy
-    overshoot, then a glint sweeps across the lenses while the bot smirks
-    and bobs its head."""
+    """Deal-with-it sunglasses drop in from the top and land with a springy
+    overshoot. The eyes shrink down into little pupils that stay visible
+    through the lenses, wandering around inside the frames, while a glint
+    sweeps across and the bot smirks."""
 
     LENS_W, LENS_H = 38, 27
     LAND = 0.55         # seconds until the drop finishes
+    COVER_Y = 14        # once the frames pass this height they hide the eyes
+
+    def __init__(self, rng):
+        super().__init__(rng)
+        self._look = (0.0, 0.0, 1.0)   # captured gaze (dx, dy, open)
 
     def _gy(self, t):
-        """Glasses center height, shared with modify() so the eyes bob with
-        the frames instead of sliding behind them."""
+        """Glasses center height, shared with modify() so the mini eyes bob
+        with the frames instead of sliding behind them."""
         k = min(1.0, t / self.LAND)
         c1, c3 = 1.70158, 2.70158           # ease-out-back overshoot
         e = 1 + c3 * (k - 1) ** 3 + c1 * (k - 1) ** 2
@@ -685,11 +703,15 @@ class Glasses(Overlay):
         return gy
 
     def modify(self, left, right, t):
-        bob = self._gy(t) - 30
-        for p in (left, right):
-            p["top_lid"] = max(p["top_lid"], 0.20)   # too cool to open wide
-            p["h"] = min(p["h"], 25.0)               # tuck fully behind lens
-            p["dy"] += -2.0 + (bob if t > self.LAND else 0.0)
+        # steal the controller's live gaze/blink for the mini eyes, then
+        # hide the real eyes once the frames have dropped over them
+        self._look = (left["dx"], left["dy"], left["open"])
+        if self._gy(t) > self.COVER_Y:
+            for p in (left, right):
+                p["scale"] = 0.0
+        else:
+            for p in (left, right):
+                p["top_lid"] = max(p["top_lid"], 0.15)
 
     def draw(self, d, s, t):
         gy = self._gy(t)
@@ -707,6 +729,24 @@ class Glasses(Overlay):
                fill=255, width=wdt)
         d.line([((EYE_R + hw) * s, (gy - 5) * s), (W * s, (gy - 10) * s)],
                fill=255, width=wdt)
+
+        # mini eyes visible through the lenses: shrink down after the frames
+        # land, then wander around inside them
+        if gy > self.COVER_Y:
+            gx, gyy, open_ = self._look
+            sk = _ease_out(min(1.0, max(0.0, (t - self.LAND + 0.15) / 0.5)))
+            ew = 20 - 8 * sk
+            eh = (17 - 7 * sk) * max(0.12, open_)
+            wander = sk * 1.0
+            ox = gx * 0.5 + (4.0 * math.sin(t * 0.9) + 2.0 * math.sin(t * 2.3)) * wander
+            oy = gyy * 0.4 + 1.6 * math.sin(t * 1.4 + 1.0) * wander
+            ox = max(-hw + ew / 2 + 3, min(hw - ew / 2 - 3, ox))
+            oy = max(-hh + eh / 2 + 3, min(hh - eh / 2 - 3, oy))
+            for ex in (EYE_L, EYE_R):
+                cx, cy = ex + ox, gy + oy
+                d.rounded_rectangle([(cx - ew / 2) * s, (cy - eh / 2) * s,
+                                     (cx + ew / 2) * s, (cy + eh / 2) * s],
+                                    radius=min(ew, eh) * 0.35 * s, fill=255)
 
         # periodic glint sweeping diagonally across both lenses
         if t > self.LAND + 0.15:
@@ -733,21 +773,23 @@ class Glasses(Overlay):
 
 
 class Blast(Overlay):
-    """Cartoon bomb detonation: a bomb sits between the eyes with a sparking
-    fuse burning down while the bot nervously eyes it, then a strobe flash,
-    a hollow ring fireball with flying debris and a shockwave, and drifting
-    smoke as the eyes creep back open. Loops on its own clock."""
+    """Cartoon bomb detonation: the two eyeballs slide together and squish
+    into one ball — which IS the bomb — a fuse pops out and burns down with
+    a spark, then a strobe flash, a hollow ring fireball with flying debris
+    and a shockwave, and drifting smoke as the eyes pop back in. Loops on
+    its own clock."""
 
-    CYCLE = 3.4
-    P_FUSE = 1.15
+    CYCLE = 4.0
+    P_MERGE = 0.7
+    P_FUSE = 1.05
     P_FLASH = 0.12
     P_BOOM = 0.95
-    P_SMOKE = CYCLE - (P_FUSE + P_FLASH + P_BOOM)
+    P_SMOKE = CYCLE - (P_MERGE + P_FUSE + P_FLASH + P_BOOM)
 
-    BX, BY = 64, 49       # bomb resting spot
+    BX, BY = 64, 42       # bomb spot = where the eyes merge
     EX, EY = 64, 40       # explosion center
 
-    FUSE = [(64.0, 41.0), (66.0, 37.5), (69.5, 35.5), (73.5, 36.5)]
+    FUSE = [(64.0, 33.5), (66.0, 30.0), (69.5, 28.0), (73.5, 29.0)]
 
     def __init__(self, rng):
         super().__init__(rng)
@@ -770,8 +812,8 @@ class Blast(Overlay):
 
     def _phase(self):
         t = self.local_t
-        for name, dur in (("fuse", self.P_FUSE), ("flash", self.P_FLASH),
-                          ("boom", self.P_BOOM)):
+        for name, dur in (("merge", self.P_MERGE), ("fuse", self.P_FUSE),
+                          ("flash", self.P_FLASH), ("boom", self.P_BOOM)):
             if t < dur:
                 return name, t / dur
             t -= dur
@@ -779,14 +821,22 @@ class Blast(Overlay):
 
     def modify(self, left, right, t):
         phase, k = self._phase()
-        if phase == "fuse":
-            # cross-eyed nervous stare down at the bomb, shiver building
-            shiver = math.sin(t * 34) * 1.4 * k
-            left["dx"] += 5 + shiver
-            right["dx"] += -5 + shiver
+        if phase == "merge":
+            # the eyeballs roll together and squish into one ball at the
+            # bomb spot; near the end they wobble as they fuse
+            e = _ease_out(k)
+            wob = math.sin(t * 22) * 1.2 * max(0.0, k - 0.6)
+            left["dx"] += (self.BX - EYE_L) * e
+            right["dx"] -= (EYE_R - self.BX) * e
             for p in (left, right):
-                p["dy"] += 4
-                p["h"] *= 1.0 - 0.1 * k
+                p["dy"] += (self.BY - EYE_CY) * e + wob
+                p["w"] *= 1.0 - 0.35 * e
+                p["h"] *= 1.0 - 0.5 * e
+                p["round"] = min(1.0, p["round"] + 0.6 * e)
+        elif phase == "fuse":
+            # the merged ball IS the bomb now; hide the real eyes
+            for p in (left, right):
+                p["scale"] = 0.0
         elif phase in ("flash", "boom"):
             for p in (left, right):
                 p["scale"] = 0.0
@@ -798,9 +848,15 @@ class Blast(Overlay):
     def draw(self, d, s, t):
         phase, k = self._phase()
 
+        if phase == "merge":
+            # the eyes themselves are the show; ignite hint at the very end
+            if k > 0.9:
+                _spark(d, self.FUSE[0][0], self.FUSE[0][1] - 1, 4, s)
+            return
+
         if phase == "fuse":
-            # bomb body, pulsing faster as detonation nears
-            r = 8 * (1 + 0.06 * math.sin(self.local_t * (6 + 18 * k)))
+            # bomb body (the merged eyeballs), pulsing faster near zero
+            r = 9 * (1 + 0.06 * math.sin(self.local_t * (6 + 18 * k)))
             d.ellipse([(self.BX - r) * s, (self.BY - r) * s,
                        (self.BX + r) * s, (self.BY + r) * s], fill=255)
             d.ellipse([(self.BX - r * 0.42) * s, (self.BY - r * 0.55) * s,
@@ -865,7 +921,357 @@ class Blast(Overlay):
                     _cloud(d, x, y, size, s)
             # smoldering crater sparks
             if int(self.local_t * 14) % 2 and k < 0.6:
-                _spark(d, self.EX + math.sin(t * 7) * 4, 52, 4, s)
+                _spark(d, self.EX + math.sin(t * 7) * 4, 48, 4, s)
+
+
+class Freeze(Overlay):
+    """Feeling cold: snowflakes drift down, icicles grow from the top edge,
+    the eyes shiver with periodic full-body shudders, and the bot exhales
+    little puffs of breath over a trembling mouth. Brrr."""
+
+    def __init__(self, rng):
+        super().__init__(rng)
+        r = self.rng
+        self.flakes = [self._spawn_flake(anywhere=True) for _ in range(9)]
+        self.icicles = [{"x": 5 + i * 17 + r.uniform(-4, 4),
+                         "len": r.uniform(6, 14),
+                         "ph": r.uniform(0, 6.28)} for i in range(8)]
+        self.puffs: list[dict] = []
+        self.cool = 0.9
+
+    def _spawn_flake(self, anywhere=False):
+        r = self.rng
+        return {"x": r.uniform(3, 125),
+                "y": r.uniform(-8, H) if anywhere else r.uniform(-10, -3),
+                "vy": r.uniform(9, 17), "ph": r.uniform(0, 6.28),
+                "sz": r.uniform(2.0, 3.4)}
+
+    def step(self, dt):
+        for f in self.flakes:
+            f["y"] += f["vy"] * dt
+            if f["y"] > H + 4:
+                f.update(self._spawn_flake())
+        self.cool -= dt
+        if self.cool <= 0:
+            self.cool = 1.9
+            self.puffs.append({"x": 64.0, "y": 54.0, "age": 0.0})
+        for pf in self.puffs:
+            pf["age"] += dt
+            pf["y"] -= 9 * dt
+            pf["x"] += 6 * dt
+        self.puffs = [pf for pf in self.puffs if pf["age"] < 1.0]
+
+    def modify(self, left, right, t):
+        # constant fine shiver plus a big shudder that rolls through
+        shudder = max(0.0, math.sin(t * 1.1)) ** 8
+        amp = 0.7 + 2.6 * shudder
+        jx = math.sin(t * 33.0) * amp
+        jy = math.sin(t * 27.0) * amp * 0.35
+        for p in (left, right):
+            p["dx"] += jx
+            p["dy"] += jy + 1.0
+            p["top_lid"] = max(p["top_lid"], 0.22 + 0.12 * shudder)
+            p["w"] *= 1.0 - 0.06 * shudder     # hunch together when shuddering
+
+    def draw(self, d, s, t):
+        # icicles growing down from the top edge
+        grow = _ease_out(min(1.0, t / 1.8))
+        for i, ic in enumerate(self.icicles):
+            ln = ic["len"] * grow
+            if ln < 1.5:
+                continue
+            x = ic["x"]
+            d.polygon([((x - 2.4) * s, 0), ((x + 2.4) * s, 0),
+                       (x * s, ln * s)], fill=255)
+            # occasional glint at a tip
+            if int(t * 2.5 + ic["ph"]) % 9 == 0:
+                _spark(d, x, ln + 2, 3.5, s)
+        # falling snow, swaying as it drifts
+        for f in self.flakes:
+            x = f["x"] + math.sin(t * 1.6 + f["ph"]) * 3.0
+            _flake(d, x, f["y"], f["sz"], s)
+        # breath puffs drifting up and away
+        for pf in self.puffs:
+            k = pf["age"]
+            if k < 0.8 or int(t * 18) % 2:      # flicker out at the end
+                _cloud(d, pf["x"], pf["y"], 3.5 + k * 6, s)
+        # chattering wavy mouth
+        pts = [((x) * s, (55 + math.sin(x * 0.9 + t * 24) * 1.3) * s)
+               for x in range(55, 74, 2)]
+        d.line(pts, fill=255, width=max(2, int(s * 1.2)))
+
+
+class Drink(Overlay):
+    """Refreshment break: a glass of water rises up to the face, the bot
+    gulps it down with happy closed eyes bobbing on every glug while the
+    water level steps down and bubbles rise, then a satisfied "ahh" with
+    sparkles before the empty glass drops away. Loops on its own clock."""
+
+    CYCLE = 4.0
+    P_RAISE = 0.5
+    P_DRINK = 2.0
+    P_AHH = 1.0
+    P_LOWER = CYCLE - (P_RAISE + P_DRINK + P_AHH)
+
+    GX, GY = 64, 41       # glass top-center while drinking
+    GH = 20               # glass height
+    TOP_HW, BOT_HW = 10, 7
+
+    def __init__(self, rng):
+        super().__init__(rng)
+        self.local_t = 0.0
+        self.bubbles = [{"x": rng.uniform(-3.5, 3.5), "ph": rng.uniform(0, 6.28),
+                         "sp": rng.uniform(6, 11)} for _ in range(2)]
+
+    def step(self, dt):
+        self.local_t += dt
+        if self.local_t >= self.CYCLE:
+            self.local_t -= self.CYCLE
+
+    def _phase(self):
+        t = self.local_t
+        for name, dur in (("raise", self.P_RAISE), ("drink", self.P_DRINK),
+                          ("ahh", self.P_AHH)):
+            if t < dur:
+                return name, t / dur
+            t -= dur
+        return "lower", min(1.0, t / self.P_LOWER)
+
+    def modify(self, left, right, t):
+        phase, k = self._phase()
+        if phase == "raise":
+            # notice the glass: peek down at it
+            for p in (left, right):
+                p["dy"] += 3 * _ease_out(k)
+            left["dx"] += 3 * _ease_out(k)
+            right["dx"] -= 3 * _ease_out(k)
+        elif phase == "drink":
+            gulp = max(0.0, math.sin(t * 7.0))
+            for p in (left, right):
+                p["bot_curve"] = max(p["bot_curve"], 0.55)   # blissful arcs
+                p["top_lid"] = max(p["top_lid"], 0.30)
+                p["dy"] += 2 + gulp * 1.8                    # bob per glug
+        elif phase == "ahh":
+            for p in (left, right):
+                p["bot_curve"] = max(p["bot_curve"], 0.6)
+                p["h"] *= 1.05
+                p["dy"] -= 1.5 * math.sin(k * math.pi)       # content lift
+
+    def _glass(self, d, s, rise, level, t):
+        """Glass outline + wavy water at `level` (1 full .. 0 empty)."""
+        gx, gy = self.GX, self.GY + rise
+        y1 = gy + self.GH
+        wdt = max(2, int(s * 1.1))
+        d.line([((gx - self.TOP_HW) * s, gy * s), ((gx - self.BOT_HW) * s, y1 * s)],
+               fill=255, width=wdt)
+        d.line([((gx + self.TOP_HW) * s, gy * s), ((gx + self.BOT_HW) * s, y1 * s)],
+               fill=255, width=wdt)
+        d.line([((gx - self.BOT_HW) * s, y1 * s), ((gx + self.BOT_HW) * s, y1 * s)],
+               fill=255, width=wdt)
+        if level > 0.03:
+            ws = gy + 2 + (1.0 - level) * (self.GH - 4)
+            f = (ws - gy) / self.GH
+            hw = self.TOP_HW + (self.BOT_HW - self.TOP_HW) * f
+            wob = math.sin(t * 9.0) * 0.7
+            d.polygon([((gx - hw + 1) * s, (ws + wob) * s),
+                       ((gx + hw - 1) * s, (ws - wob) * s),
+                       ((gx + self.BOT_HW - 1) * s, (y1 - 1) * s),
+                       ((gx - self.BOT_HW + 1) * s, (y1 - 1) * s)], fill=255)
+            # bubbles rising through the water (black, inside the fill)
+            depth = y1 - ws
+            if depth > 7:
+                for b in self.bubbles:
+                    by = y1 - 2.5 - ((t * b["sp"] + b["ph"] * 3) % (depth - 4))
+                    if ws + 2 < by < y1 - 2:
+                        r = 0.9 * s
+                        bx = (gx + b["x"]) * s
+                        d.ellipse([bx - r, by * s - r, bx + r, by * s + r], fill=0)
+
+    def draw(self, d, s, t):
+        phase, k = self._phase()
+        if phase == "raise":
+            self._glass(d, s, (1 - _ease_out(k)) * 26, 1.0, t)
+        elif phase == "drink":
+            self._glass(d, s, 0.0, 1.0 - k, t)
+            # stray droplets flicking off on each gulp
+            if math.sin(t * 7.0) > 0.85:
+                _drop(d, self.GX - 13, self.GY + 4, 3.5, s)
+        elif phase == "ahh":
+            if k < 0.7:  # sparkles of satisfaction
+                for i, (ox, oy) in enumerate(((-28, -2), (28, -5), (0, -12))):
+                    ph = (t * 3 + i) % 3
+                    if ph < 1.6:
+                        _spark(d, self.GX + ox, self.GY + oy,
+                               8 * math.sin(ph / 1.6 * math.pi), s)
+            # happy open "ahh" mouth
+            r = (3.6 + math.sin(min(k, 0.5) * math.pi) * 1.4)
+            d.pieslice([(64 - r) * s, (52 - r * 0.4) * s,
+                        (64 + r) * s, (52 + r * 1.2) * s], 0, 180, fill=255)
+        else:  # lower: empty glass drops away
+            self._glass(d, s, _ease_out(k) * 28, 0.0, t)
+
+
+class Hack(Overlay):
+    """The whole face powers down CRT-style — both eyes squash into a line
+    that shrinks to a dot — then a little terminal window boots up in its
+    place: code lines scroll by, a progress bar fills, the screen glitches
+    and jitters, and when the bar hits 100% a checkmark flashes, the screen
+    collapses, and the eyes pop back. Loops on its own clock."""
+
+    CYCLE = 4.6
+    P_COLLAPSE = 0.45
+    P_BOOT = 0.3
+    P_HACK = 2.5
+    P_DONE = 0.35
+    P_OFF = 0.35
+    P_BACK = CYCLE - (P_COLLAPSE + P_BOOT + P_HACK + P_DONE + P_OFF)
+
+    CX, CY = 64, 32
+    SW, SH = 78, 46       # terminal size
+    ROWS = 7
+    ROW_H = 4.2
+
+    def __init__(self, rng):
+        super().__init__(rng)
+        self.local_t = 0.0
+        self.rows: list[list[tuple[float, float]]] = []
+        self.row_cd = 0.0
+
+    def _make_row(self):
+        r = self.rng
+        x = 3.0 + r.choice((0, 4, 8))
+        segs = []
+        for _ in range(r.randrange(2, 5)):
+            w = r.uniform(4, 14)
+            if x + w > self.SW - 16:
+                break
+            segs.append((x, w))
+            x += w + 3
+        return segs
+
+    def step(self, dt):
+        self.local_t += dt
+        if self.local_t >= self.CYCLE:
+            self.local_t -= self.CYCLE
+            self.rows.clear()
+        phase, _ = self._phase()
+        if phase == "hack":
+            self.row_cd -= dt
+            if self.row_cd <= 0:
+                self.row_cd = 0.13
+                self.rows.append(self._make_row())
+                if len(self.rows) > self.ROWS:
+                    self.rows.pop(0)
+
+    def _phase(self):
+        t = self.local_t
+        for name, dur in (("collapse", self.P_COLLAPSE), ("boot", self.P_BOOT),
+                          ("hack", self.P_HACK), ("done", self.P_DONE),
+                          ("off", self.P_OFF)):
+            if t < dur:
+                return name, t / dur
+            t -= dur
+        return "back", min(1.0, t / self.P_BACK)
+
+    def modify(self, left, right, t):
+        phase, k = self._phase()
+        if phase == "collapse":
+            # CRT power-down: eyes rush together and squash flat
+            e = _ease_out(k)
+            left["dx"] += (self.CX - EYE_L) * e
+            right["dx"] -= (EYE_R - self.CX) * e
+            for p in (left, right):
+                p["h"] *= 1.0 - 0.9 * e
+                p["w"] *= 1.0 - 0.45 * e
+        elif phase == "back":
+            for p in (left, right):
+                p["scale"] = min(1.0, _ease_out(k) * 1.06)
+        else:
+            for p in (left, right):
+                p["scale"] = 0.0
+
+    def _frame(self, d, s, hw, hh, jx=0.0, jy=0.0):
+        cx, cy = self.CX + jx, self.CY + jy
+        d.rounded_rectangle([(cx - hw) * s, (cy - hh) * s,
+                             (cx + hw) * s, (cy + hh) * s],
+                            radius=3 * s, outline=255, width=max(2, int(s * 1.0)))
+        return cx, cy
+
+    def draw(self, d, s, t):
+        phase, k = self._phase()
+        hw, hh = self.SW / 2, self.SH / 2
+
+        if phase == "boot":
+            # a dot stretches into a line, then the line opens into a screen
+            if k < 0.4:
+                w = hw * (k / 0.4)
+                d.line([((self.CX - w) * s, self.CY * s),
+                        ((self.CX + w) * s, self.CY * s)],
+                       fill=255, width=max(2, int(s * 1.4)))
+            else:
+                self._frame(d, s, hw, hh * (k - 0.4) / 0.6)
+
+        elif phase == "hack":
+            glitching = (self.local_t % 0.9) < 0.09
+            jx = self.rng.uniform(-1.2, 1.2) if glitching else 0.0
+            jy = self.rng.uniform(-0.8, 0.8) if glitching else 0.0
+            cx, cy = self._frame(d, s, hw, hh, jx, jy)
+            x0, y0 = cx - hw, cy - hh
+            # title bar with window dots
+            d.line([(x0 * s, (y0 + 6) * s), ((cx + hw) * s, (y0 + 6) * s)],
+                   fill=255, width=max(1, int(s * 0.8)))
+            for i in range(3):
+                bx = x0 + 4 + i * 4.5
+                d.ellipse([(bx - 1.1) * s, (y0 + 2) * s,
+                           (bx + 1.1) * s, (y0 + 4.4) * s], fill=255)
+            # scrolling code lines (token dashes)
+            for i, segs in enumerate(self.rows):
+                ry = y0 + 9 + i * self.ROW_H
+                ox = ((i * 37 + int(self.local_t * 60)) % 7 - 3) if glitching else 0
+                for sx, wdt in segs:
+                    d.rectangle([(x0 + sx + ox) * s, ry * s,
+                                 (x0 + sx + ox + wdt) * s, (ry + 1.8) * s],
+                                fill=255)
+            # blinking cursor after the newest line
+            if self.rows and int(self.local_t * 5) % 2:
+                last = self.rows[-1]
+                lx = (last[-1][0] + last[-1][1] + 2) if last else 4
+                ly = y0 + 9 + (len(self.rows) - 1) * self.ROW_H
+                d.rectangle([(x0 + lx) * s, ly * s,
+                             (x0 + lx + 2.5) * s, (ly + 2.2) * s], fill=255)
+            # glitch noise streaks
+            if glitching:
+                for _ in range(2):
+                    ny = y0 + self.rng.uniform(8, self.SH - 4)
+                    nx = x0 + self.rng.uniform(2, self.SW - 24)
+                    d.rectangle([nx * s, ny * s, (nx + self.rng.uniform(8, 20)) * s,
+                                 (ny + 1.2) * s], fill=255)
+            # progress bar along the bottom
+            bw, by = self.SW - 12, cy + hh - 7
+            d.rectangle([(x0 + 6) * s, by * s, (x0 + 6 + bw) * s, (by + 4) * s],
+                        outline=255, width=max(1, int(s * 0.8)))
+            d.rectangle([(x0 + 7) * s, (by + 1) * s,
+                         (x0 + 7 + (bw - 2) * k) * s, (by + 3) * s], fill=255)
+
+        elif phase == "done":
+            # flash the frame and stamp a big checkmark
+            if int(self.local_t * 30) % 3:
+                cx, cy = self._frame(d, s, hw, hh)
+                wdt = max(3, int(s * 2.2))
+                d.line([((cx - 12) * s, cy * s), ((cx - 3) * s, (cy + 9) * s)],
+                       fill=255, width=wdt)
+                d.line([((cx - 3) * s, (cy + 9) * s), ((cx + 13) * s, (cy - 8) * s)],
+                       fill=255, width=wdt)
+
+        elif phase == "off":
+            # screen collapses to a line, the line to a fading dot
+            if k < 0.55:
+                self._frame(d, s, hw, hh * (1 - k / 0.55) + 0.5)
+            else:
+                w = hw * (1 - (k - 0.55) / 0.45)
+                d.line([((self.CX - w) * s, self.CY * s),
+                        ((self.CX + w) * s, self.CY * s)],
+                       fill=255, width=max(2, int(s * 1.4)))
 
 
 # name -> (base expression, eye parameter overrides, overlay class)
@@ -884,4 +1290,7 @@ ANIMATIONS: dict[str, tuple[str, dict | None, type[Overlay]]] = {
     "pew3d":     ("surprised", None, Pew3D),
     "glasses":   ("neutral", {"dy": -1.0}, Glasses),
     "blast":     ("scared", {"w": 27.0}, Blast),
+    "freeze":    ("sad", {"h": 36.0}, Freeze),
+    "drink":     ("happy", {"dy": -2.0}, Drink),
+    "hack":      ("neutral", None, Hack),
 }

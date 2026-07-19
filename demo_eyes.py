@@ -4,9 +4,10 @@
 
 Keys:
   1..0, q..u      expressions
-  s d f g h j k l z x v b n m   animations (party, tired, thumbs_up, pew,
-                          laugh, cry, hearts, shock, music, rage, confused,
-                          pew3d, glasses, blast)
+  s d f g h j k l z x v b n m , . /   animations (party, tired, thumbs_up,
+                          pew, laugh, cry, hearts, shock, music, rage,
+                          confused, pew3d, glasses, blast, freeze, drink,
+                          hack)
   TAB             cycle through everything
   SPACE           blink now
   A               toggle auto mode (random expressions + animations)
@@ -29,7 +30,7 @@ ALL_NAMES = EXPR_NAMES + ANIM_NAMES
 KEYMAP: dict[str, str] = {}
 for _k, _n in zip("1234567890qwertyu", EXPR_NAMES):
     KEYMAP[_k] = _n
-for _k, _n in zip("sdfghjklzxvbnm", ANIM_NAMES):
+for _k, _n in zip("sdfghjklzxvbnm,./", ANIM_NAMES):
     KEYMAP[_k] = _n
 
 
