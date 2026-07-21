@@ -1633,6 +1633,188 @@ class Hack(Overlay):
                        fill=255, width=max(2, int(s * 1.4)))
 
 
+class Alarm(Overlay):
+    """Rise and shine: the eyes glide together and squish into one round
+    alarm clock -- twin bells, striker, stubby feet. The ring builds up,
+    rattles at full blast, then rings itself out with a decaying wobble.
+    A calm beat, then the clock shrinks away and the eyes pop back with a
+    springy overshoot. Loops on its own clock."""
+
+    CYCLE = 4.6
+    P_MERGE = 0.7
+    P_RING = 2.5
+    P_CALM = 0.4
+    P_BACK = CYCLE - (P_MERGE + P_RING + P_CALM)
+
+    CX, CY = 64, 34
+    R = 15
+
+    def __init__(self, rng):
+        super().__init__(rng)
+        self.local_t = 0.0
+
+    def step(self, dt):
+        self.local_t += dt
+        if self.local_t >= self.CYCLE:
+            self.local_t -= self.CYCLE
+
+    def _phase(self):
+        t = self.local_t
+        for name, dur in (("merge", self.P_MERGE), ("ring", self.P_RING),
+                          ("calm", self.P_CALM)):
+            if t < dur:
+                return name, t / dur
+            t -= dur
+        return "back", min(1.0, t / self.P_BACK)
+
+    # ------------------------------------------------------------------ #
+    # easing helpers (local so the overlay is self-contained)
+    @staticmethod
+    def _smooth(k):
+        """smoothstep: gentle in AND out"""
+        return k * k * (3.0 - 2.0 * k)
+
+    @staticmethod
+    def _back_out(k):
+        """ease-out with a small springy overshoot"""
+        c = 1.70158
+        k -= 1.0
+        return 1.0 + k * k * ((c + 1.0) * k + c)
+
+    def _envelope(self, k):
+        """ring intensity over the ring phase: quick ramp-up, full
+        sustain, then a smooth ring-out so it dies down naturally."""
+        if k < 0.12:                      # wind up
+            return self._smooth(k / 0.12)
+        if k < 0.72:                      # full blast
+            return 1.0
+        return 1.0 - self._smooth((k - 0.72) / 0.28)  # ring out
+
+    def _shake(self, t, amp):
+        # one dominant frequency + a soft harmonic = lively but not jittery
+        return (math.sin(t * 42.0) * 2.2 + math.sin(t * 21.0) * 0.8) * amp
+
+    # ------------------------------------------------------------------ #
+    def modify(self, left, right, t):
+        phase, k = self._phase()
+        if phase == "merge":
+            # eyes glide together with a tiny squash-and-settle
+            e = self._smooth(k)
+            settle = self._back_out(k) if k > 0.6 else e
+            left["dx"] += (self.CX - EYE_L) * e
+            right["dx"] -= (EYE_R - self.CX) * e
+            for p in (left, right):
+                p["dy"] += (self.CY - EYE_CY) * e
+                p["top_lid"] = 0.0   # stay fully open, not sleepy-lidded
+                p["w"] *= 1.0 - 0.30 * settle
+                p["h"] *= 1.0 - 0.45 * settle
+                p["round"] = min(1.0, p["round"] + 0.8 * e)
+                # fade the eyes right at the end so the clock takes over
+                if k > 0.85:
+                    p["scale"] = max(0.0, 1.0 - (k - 0.85) / 0.15)
+        elif phase in ("ring", "calm"):
+            for p in (left, right):
+                p["scale"] = 0.0
+        else:  # back: eyes pop in with overshoot, tiny residual wobble
+            e = self._back_out(min(1.0, k * 1.15))
+            wob = math.sin(self.local_t * 18.0) * 0.8 * max(0.0, 1.0 - k * 2.0)
+            for p in (left, right):
+                p["scale"] = max(0.0, e)
+                p["dx"] += wob
+
+    # ------------------------------------------------------------------ #
+    def _bell(self, d, cx, cy, r, s, tilt):
+        """dome bell; tilt shifts it like it's rocking on its post"""
+        d.pieslice([(cx + tilt - r) * s, (cy - r) * s,
+                    (cx + tilt + r) * s, (cy + r) * s], 180, 360, fill=255)
+
+    def draw(self, d, s, t):
+        phase, k = self._phase()
+        if phase == "merge" and k < 0.85:
+            return
+
+        cx, cy, r = self.CX, self.CY, float(self.R)
+
+        # grow in during the tail of merge, shrink out during back
+        if phase == "merge":
+            r *= self._smooth((k - 0.85) / 0.15)
+        elif phase == "back":
+            r *= 1.0 - self._smooth(min(1.0, k * 1.6))
+        if r < 1.5:
+            return
+
+        env = self._envelope(k) if phase == "ring" else 0.0
+        ringing = env > 0.02
+
+        # whole clock judders; amplitude follows the envelope
+        cx += self._shake(self.local_t, env)
+        # slight hop at full blast
+        cy -= abs(math.sin(self.local_t * 42.0)) * 0.9 * env
+
+        # --- stubby feet ------------------------------------------------
+        wdt = max(2, int(s * 1.3))
+        for fx in (cx - r * 0.55, cx + r * 0.55):
+            d.line([(fx * s, (cy + r * 0.85) * s),
+                    (fx * s, (cy + r * 1.18) * s)], fill=255, width=wdt)
+
+        # --- twin bells + striker --------------------------------------
+        rock = math.sin(self.local_t * 24.0) * 1.8 * env
+        self._bell(d, cx - r * 0.62, cy - r * 0.88, r * 0.52, s, -rock)
+        self._bell(d, cx + r * 0.62, cy - r * 0.88, r * 0.52, s, rock)
+        # striker swings opposite the bells
+        sw = -rock * 1.4
+        d.ellipse([(cx + sw - r * 0.15) * s, (cy - r * 1.30) * s,
+                   (cx + sw + r * 0.15) * s, (cy - r * 1.00) * s], fill=255)
+
+        # --- clock body + face -----------------------------------------
+        d.ellipse([(cx - r) * s, (cy - r) * s, (cx + r) * s, (cy + r) * s],
+                  fill=255)
+        d.ellipse([(cx - r * 0.8) * s, (cy - r * 0.8) * s,
+                   (cx + r * 0.8) * s, (cy + r * 0.8) * s], fill=0)
+
+        for i in range(12):
+            a = i * math.pi / 6
+            r0, r1 = r * 0.62, r * 0.74
+            d.line([((cx + math.cos(a) * r0) * s, (cy + math.sin(a) * r0) * s),
+                    ((cx + math.cos(a) * r1) * s, (cy + math.sin(a) * r1) * s)],
+                   fill=255, width=max(1, int(s * 0.6)))
+
+        # --- hands: spin scales with envelope, glide back to 12 --------
+        wdt_h = max(2, int(s * 1.2))
+        base = -math.pi / 2
+        if phase == "ring":
+            spin = self._smooth(min(1.0, env * 1.2))
+            ha = base + self.local_t * 11.0 * spin
+            ma = base + self.local_t * 18.0 * spin
+        else:
+            ha = ma = base
+        for ang, ln in ((ha, 0.35), (ma, 0.55)):
+            d.line([(cx * s, cy * s),
+                    ((cx + math.cos(ang) * r * ln) * s,
+                     (cy + math.sin(ang) * r * ln) * s)],
+                   fill=255, width=wdt_h)
+        d.ellipse([(cx - 1.2) * s, (cy - 1.2) * s,
+                   (cx + 1.2) * s, (cy + 1.2) * s], fill=255)
+
+        # --- sound waves: concentric arcs radiating from the sides -----
+        if ringing:
+            for i in range(3):
+                ph = (self.local_t * 1.8 + i / 3.0) % 1.0
+                rr = r * (1.35 + ph * 1.1)
+                fade = (1.0 - ph) * env
+                if fade < 0.08:
+                    continue
+                wdt_a = max(1, int(s * 1.5 * fade))
+                # left arcs open leftward, right arcs open rightward,
+                # both centered ON the clock so they radiate outward
+                d.arc([(cx - rr) * s, (cy - rr) * s,
+                       (cx + rr) * s, (cy + rr) * s],
+                      150, 210, fill=255, width=wdt_a)
+                d.arc([(cx - rr) * s, (cy - rr) * s,
+                       (cx + rr) * s, (cy + rr) * s],
+                      -30, 30, fill=255, width=wdt_a)
+                
+
 def _puffcloud(d, cx, cy, size, s, halo=0.0):
     """Solid puffy cloud with a flat base; overlapping puffs so it reads as
     one shape at weather-icon sizes. halo > 0 punches a black outline ring
@@ -1936,6 +2118,7 @@ ANIMATIONS: dict[str, tuple[str, dict | None, type[Overlay]]] = {
     "freeze":    ("sad", {"h": 36.0}, Freeze),
     "drink":     ("happy", {"dy": -2.0}, Drink),
     "hack":      ("neutral", None, Hack),
+    "alarm":     ("sleepy", {"top_lid": 0.0, "dy": 0.0}, Alarm),
     "hypno":     ("neutral", None, Hypnotized),
     "sleep":     ("neutral", None, Sleep),
     "space":     ("neutral", None, SpaceGlasses),
