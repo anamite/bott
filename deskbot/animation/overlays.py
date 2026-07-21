@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import math
 import random
+import time
 
 W, H = 128, 64
 EYE_L, EYE_R, EYE_CY = 39, 89, 32
@@ -2084,6 +2085,371 @@ class WeatherCloudy(_Weather):
         _puffcloud(d, cx - 17 + math.sin(t * 0.45 + 2) * 3, cy - 13, 9 * vis, s)
 
 
+# class Clock(_Weather):
+#     """Retro split-flap clock: the eyes glance up, shrink away, and a row
+#     of flip-clock cards drops in showing the live time as 24-hour HH:MM.
+#     Whenever a digit ticks over it does a quick mechanical flick --
+#     squashing flat and popping back with the new number, seam flashing
+#     on the beat -- the colon blinks like a heartbeat, and a little sun or
+#     moon glyph above tells day from night. Then the cards lift away and
+#     the eyes pop back in. Loops on its own clock.
+
+#     The displayed time is freely settable at runtime via
+#     set_clock_time(hour, minute); call it with no arguments (or None,
+#     None) to follow the live system clock again.
+#     """
+
+#     CYCLE = 7.0
+#     P_LOOK = 0.8
+#     P_IN = 0.5
+#     P_SHOW = 4.2
+#     P_OUT = 0.5
+#     P_REST = CYCLE - (P_LOOK + P_IN + P_SHOW + P_OUT)
+
+#     CX, CY = 64, 33
+#     CARD_W, CARD_H = 13.0, 20.0
+#     GAP, COLON_W, COLON_GAP = 2.5, 6.0, 5.0
+#     FLIP_DUR = 0.30
+
+#     HOUR: int | None = None
+#     MINUTE: int | None = None
+
+#     def __init__(self, rng):
+#         super().__init__(rng)
+#         h, m = self._time_now()
+#         self.chars = list(f"{h:02d}{m:02d}")
+#         self.flip = [None, None, None, None]   # [from_char, to_char, age] | None
+#         self._last_hm = (h, m)
+
+#     def _time_now(self):
+#         if self.HOUR is not None and self.MINUTE is not None:
+#             return self.HOUR % 24, self.MINUTE % 60
+#         tm = time.localtime()
+#         return tm.tm_hour, tm.tm_min
+
+#     def step(self, dt):
+#         super().step(dt)
+#         hm = self._time_now()
+#         if hm != self._last_hm:
+#             self._last_hm = hm
+#             new_chars = list(f"{hm[0]:02d}{hm[1]:02d}")
+#             for i, new in enumerate(new_chars):
+#                 if new != self.chars[i] and self.flip[i] is None:
+#                     self.flip[i] = [self.chars[i], new, 0.0]
+#         for i, fl in enumerate(self.flip):
+#             if fl is None:
+#                 continue
+#             fl[2] += dt
+#             if fl[2] >= self.FLIP_DUR:
+#                 self.chars[i] = fl[1]
+#                 self.flip[i] = None
+
+#     def _stroke_digit(self, d, ch, cx, cy, w, h, s, wdt):
+#         for line in self._SEG.get(ch, ()):
+#             d.line([((cx - w / 2 + px * w) * s, (cy - h / 2 + py * h / 2) * s)
+#                     for px, py in line], fill=255, width=wdt, joint="curve")
+
+#     def _card(self, d, s, cx, cy, i, vis):
+#         w, h = self.CARD_W * vis, self.CARD_H * vis
+#         if w < 1.5:
+#             return
+#         wdt = max(1, int(s * 0.9 * vis))
+#         d.rounded_rectangle([(cx - w / 2) * s, (cy - h / 2) * s,
+#                              (cx + w / 2) * s, (cy + h / 2) * s],
+#                             radius=2 * s * vis, outline=255, width=wdt)
+#         seam_w = wdt
+#         fl = self.flip[i]
+#         if fl is None:
+#             ch, squash = self.chars[i], 1.0
+#         else:
+#             k = min(1.0, fl[2] / self.FLIP_DUR)
+#             squash = abs(math.cos(k * math.pi))
+#             ch = fl[0] if k < 0.5 else fl[1]
+#             if 0.45 < k < 0.55:      # mechanical "clack" flash on the seam
+#                 seam_w = max(wdt + 1, int(s * 1.7 * vis))
+#         d.line([(cx - w / 2) * s, cy * s, (cx + w / 2) * s, cy * s],
+#                fill=255, width=seam_w)
+#         dh = h * max(0.08, squash)
+#         self._stroke_digit(d, ch, cx, cy, w * 0.62, dh * 0.92, s,
+#                            max(1, int(s * 1.1 * vis)))
+
+#     def _colon(self, d, s, cx, cy, h, vis):
+#         r = 1.3 * vis
+#         if r < 0.4 or int(time.time() * 2) % 2:
+#             return
+#         for dy in (-h * 0.18, h * 0.18):
+#             d.ellipse([(cx - r) * s, (cy + dy - r) * s,
+#                        (cx + r) * s, (cy + dy + r) * s], fill=255)
+
+#     def _daynight(self, d, s, cx, cy, hour, vis):
+#         r = 4.2 * vis
+#         if r < 1.0:
+#             return
+#         if 6 <= hour < 18:
+#             d.ellipse([(cx - r) * s, (cy - r) * s, (cx + r) * s, (cy + r) * s],
+#                       fill=255)
+#             for i in range(6):
+#                 a = i * math.pi / 3 + self.local_t * 0.6
+#                 d.line([((cx + math.cos(a) * (r + 1.5)) * s,
+#                          (cy + math.sin(a) * (r + 1.5)) * s),
+#                         ((cx + math.cos(a) * (r + 3.5)) * s,
+#                          (cy + math.sin(a) * (r + 3.5)) * s)],
+#                        fill=255, width=max(1, int(s * 0.8)))
+#         else:
+#             d.ellipse([(cx - r) * s, (cy - r) * s, (cx + r) * s, (cy + r) * s],
+#                       fill=255)
+#             off = r * 0.55
+#             d.ellipse([(cx - r + off) * s, (cy - r) * s,
+#                        (cx + r + off) * s, (cy + r) * s], fill=0)
+#             for sx, sy in ((cx - r * 2.2, cy - r * 1.2),
+#                            (cx - r * 2.8, cy + r * 0.7)):
+#                 _spark(d, sx, sy, 2.2 * vis, s)
+
+#     def draw(self, d, s, t):
+#         vis = self._vis()
+#         if vis <= 0.03:
+#             return
+
+#         hour = self._last_hm[0]
+#         self._daynight(d, s, self.CX, self.CY - 19, hour, vis)
+
+#         widths = [self.CARD_W, self.CARD_W, self.COLON_W,
+#                   self.CARD_W, self.CARD_W]
+#         gaps = [self.GAP, self.COLON_GAP, self.COLON_GAP, self.GAP]
+#         total = sum(widths) + sum(gaps)
+#         x = self.CX - total * vis / 2
+#         cy = self.CY
+
+#         for slot, w in enumerate(widths):
+#             cx = x + w * vis / 2
+#             if slot in (0, 1):
+#                 self._card(d, s, cx, cy, slot, vis)
+#             elif slot == 2:
+#                 self._colon(d, s, cx, cy, self.CARD_H * vis, vis)
+#             else:
+#                 self._card(d, s, cx, cy, slot - 1, vis)
+#             x += w * vis
+#             if slot < len(gaps):
+#                 x += gaps[slot] * vis
+
+
+# def set_clock_time(hour: int | None = None, minute: int | None = None):
+#     """Pin the time shown by the 'time' animation, or pass no arguments
+#     (or (None, None)) to make it follow the live system clock again."""
+#     Clock.HOUR = hour
+#     Clock.MINUTE = minute
+
+class Clock(_Weather):
+    """Funky flip clock: the eyes glance up and shrink away, then four big
+    digits bounce in one after another -- each drops from above, squashes,
+    and springs upright -- showing the live time as 24-hour HH:MM. While
+    on screen the digits bob gently in a wave, the colon pulses like a
+    heartbeat, and a sun/moon glyph floats above. When a digit ticks over
+    it does a slot-machine roll: the old number squashes flat, a card
+    outline flashes around it for the mechanical "clack", and the new
+    number pops back with a springy overshoot. The digits then hop away
+    in sequence and the eyes pop back in. Loops on its own clock.
+
+    Displayed time is settable at runtime via set_clock_time(hour,
+    minute); call with no args (or None, None) to follow the system
+    clock again.
+    """
+
+    CYCLE = 7.0
+    P_LOOK = 0.8
+    P_IN = 0.7
+    P_SHOW = 4.0
+    P_OUT = 0.6
+    P_REST = CYCLE - (P_LOOK + P_IN + P_SHOW + P_OUT)
+
+    CX, CY = 64, 34
+    DIGIT_W, DIGIT_H = 11.0, 18.0        # digit stroke box (no card around it)
+    GAP, COLON_W = 5.0, 6.0
+    FLIP_DUR = 0.38
+    STAGGER = 0.10                        # per-digit delay on entrance/exit
+
+    HOUR: int | None = None
+    MINUTE: int | None = None
+
+    def __init__(self, rng):
+        super().__init__(rng)
+        h, m = self._time_now()
+        self.chars = list(f"{h:02d}{m:02d}")
+        self.flip = [None, None, None, None]  # [from, to, age] | None
+        self._last_hm = (h, m)
+
+    def _time_now(self):
+        if self.HOUR is not None and self.MINUTE is not None:
+            return self.HOUR % 24, self.MINUTE % 60
+        tm = time.localtime()
+        return tm.tm_hour, tm.tm_min
+
+    def step(self, dt):
+        super().step(dt)
+        hm = self._time_now()
+        if hm != self._last_hm:
+            self._last_hm = hm
+            new_chars = list(f"{hm[0]:02d}{hm[1]:02d}")
+            for i, new in enumerate(new_chars):
+                if new != self.chars[i] and self.flip[i] is None:
+                    self.flip[i] = [self.chars[i], new, 0.0]
+        for i, fl in enumerate(self.flip):
+            if fl is None:
+                continue
+            fl[2] += dt
+            if fl[2] >= self.FLIP_DUR:
+                self.chars[i] = fl[1]
+                self.flip[i] = None
+
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    def _smooth(k):
+        return k * k * (3.0 - 2.0 * k)
+
+    @staticmethod
+    def _bounce_out(k):
+        """springy overshoot ease-out"""
+        c = 1.9
+        k -= 1.0
+        return 1.0 + k * k * ((c + 1.0) * k + c)
+
+    def _slot_anim(self, i):
+        """per-slot (0..3) entrance/exit: returns (vis, dy, squash).
+        vis in 0..1, dy = extra vertical offset, squash = height scale."""
+        # figure out where we are relative to the show window
+        t = self.local_t
+        t_in = self.P_LOOK + i * self.STAGGER
+        t_out = self.P_LOOK + self.P_IN + self.P_SHOW + i * self.STAGGER
+        in_dur = self.P_IN - 3 * self.STAGGER
+        out_dur = self.P_OUT - 3 * self.STAGGER
+
+        if t < t_in:
+            return 0.0, 0.0, 1.0
+        if t < t_in + in_dur:                       # dropping in + bounce
+            k = (t - t_in) / in_dur
+            e = self._bounce_out(k)
+            dy = -26.0 * (1.0 - e)                  # falls from above
+            sq = 1.0 - 0.35 * math.sin(min(1.0, k * 1.4) * math.pi)
+            return min(1.0, k * 3.0), dy, max(0.55, sq)
+        if t < t_out:                               # steady: gentle wave bob
+            wob = math.sin(self.local_t * 2.2 + i * 0.9) * 0.8
+            return 1.0, wob, 1.0
+        if t < t_out + out_dur:                     # hop up and away
+            k = (t - t_out) / out_dur
+            e = self._smooth(k)
+            dy = 3.0 * math.sin(k * math.pi * 0.5) - 30.0 * e * e
+            return 1.0 - self._smooth(max(0.0, (k - 0.3) / 0.7)), dy, 1.0
+        return 0.0, 0.0, 1.0
+
+    # ------------------------------------------------------------------ #
+    def _stroke_digit(self, d, ch, cx, cy, w, h, s, wdt):
+        for line in self._SEG.get(ch, ()):
+            d.line([((cx - w / 2 + px * w) * s, (cy - h / 2 + py * h / 2) * s)
+                    for px, py in line], fill=255, width=wdt, joint="curve")
+
+    def _digit(self, d, s, cx, cy, i):
+        vis, dy, sq = self._slot_anim(i)
+        if vis <= 0.03:
+            return
+        cy += dy
+        w, h = self.DIGIT_W * vis, self.DIGIT_H * vis * sq
+        wdt = max(2, int(s * 1.6 * vis))
+
+        fl = self.flip[i]
+        if fl is None:
+            self._stroke_digit(d, self.chars[i], cx, cy, w, h, s, wdt)
+            return
+
+        # slot-machine roll: old digit squashes flat, new pops with spring
+        k = min(1.0, fl[2] / self.FLIP_DUR)
+        if k < 0.5:
+            roll = 1.0 - self._smooth(k / 0.5)          # 1 -> 0
+            ch = fl[0]
+        else:
+            roll = self._bounce_out((k - 0.5) / 0.5)    # 0 -> 1 w/ overshoot
+            ch = fl[1]
+        dh = h * max(0.10, min(1.15, roll))
+        self._stroke_digit(d, ch, cx, cy, w, dh, s, wdt)
+
+        # mechanical clack: card outline flashes around the digit mid-flip
+        if 0.35 < k < 0.65:
+            flash = 1.0 - abs(k - 0.5) / 0.15
+            m = 2.5
+            d.rounded_rectangle([(cx - w / 2 - m) * s, (cy - h / 2 - m) * s,
+                                 (cx + w / 2 + m) * s, (cy + h / 2 + m) * s],
+                                radius=2 * s, outline=255,
+                                width=max(1, int(s * 1.2 * flash)))
+            d.line([(cx - w / 2 - m) * s, cy * s,
+                    (cx + w / 2 + m) * s, cy * s],
+                   fill=255, width=max(1, int(s * 1.2 * flash)))
+
+    def _colon(self, d, s, cx, cy, vis):
+        if vis <= 0.05:
+            return
+        # heartbeat pulse instead of hard blink: radius breathes
+        beat = (math.sin(self.local_t * math.pi * 2.0) + 1.0) / 2.0
+        r = (1.1 + 0.8 * beat) * vis
+        for dy in (-self.DIGIT_H * 0.22, self.DIGIT_H * 0.22):
+            d.ellipse([(cx - r) * s, (cy + dy - r) * s,
+                       (cx + r) * s, (cy + dy + r) * s], fill=255)
+
+    def _daynight(self, d, s, cx, cy, hour, vis):
+        r = 4.2 * vis
+        if r < 1.0:
+            return
+        cy += math.sin(self.local_t * 1.6) * 1.0     # lazy float
+        if 6 <= hour < 18:
+            d.ellipse([(cx - r) * s, (cy - r) * s, (cx + r) * s, (cy + r) * s],
+                      fill=255)
+            for i in range(6):
+                a = i * math.pi / 3 + self.local_t * 0.6
+                d.line([((cx + math.cos(a) * (r + 1.5)) * s,
+                         (cy + math.sin(a) * (r + 1.5)) * s),
+                        ((cx + math.cos(a) * (r + 3.5)) * s,
+                         (cy + math.sin(a) * (r + 3.5)) * s)],
+                       fill=255, width=max(1, int(s * 0.8)))
+        else:
+            d.ellipse([(cx - r) * s, (cy - r) * s, (cx + r) * s, (cy + r) * s],
+                      fill=255)
+            off = r * 0.55
+            d.ellipse([(cx - r + off) * s, (cy - r) * s,
+                       (cx + r + off) * s, (cy + r) * s], fill=0)
+            for j, (sx, sy) in enumerate(((cx - r * 2.2, cy - r * 1.2),
+                                          (cx - r * 2.8, cy + r * 0.7))):
+                tw = 0.6 + 0.4 * math.sin(self.local_t * 3.0 + j * 2.0)
+                _spark(d, sx, sy, 2.2 * vis * tw, s)
+
+    def draw(self, d, s, t):
+        vis = self._vis()
+        if vis <= 0.03:
+            return
+
+        hour = self._last_hm[0]
+
+        # layout: four digits + colon, generous gaps, no card boxes
+        widths = [self.DIGIT_W, self.DIGIT_W, self.COLON_W,
+                  self.DIGIT_W, self.DIGIT_W]
+        total = sum(widths) + self.GAP * 4
+        x = self.CX - total / 2
+        cy = self.CY
+
+        for slot, w in enumerate(widths):
+            cx = x + w / 2
+            if slot == 2:
+                cvis, cdy, _ = self._slot_anim(1)   # colon rides with digit 1
+                self._colon(d, s, cx, cy + cdy * 0.5, cvis * vis)
+            else:
+                self._digit(d, s, cx, cy, slot if slot < 2 else slot - 1)
+            x += w + self.GAP
+
+
+def set_clock_time(hour: int | None = None, minute: int | None = None):
+    """Pin the time shown by the 'time' animation, or pass no arguments
+    (or (None, None)) to make it follow the live system clock again."""
+    Clock.HOUR = hour
+    Clock.MINUTE = minute
+
+
 def set_weather_temp(value: float, kind: str | None = None):
     """Set the temperature (°C) shown by the weather animations.
 
@@ -2126,4 +2492,5 @@ ANIMATIONS: dict[str, tuple[str, dict | None, type[Overlay]]] = {
     "rainy":     ("neutral", None, WeatherRainy),
     "winter":    ("neutral", None, WeatherWinter),
     "cloudy":    ("neutral", None, WeatherCloudy),
+    "time":      ("neutral", None, Clock),
 }
