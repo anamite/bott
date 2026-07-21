@@ -677,6 +677,150 @@ class Pew3D(Overlay):
                 _spark(d, cx, cy + drop_k * 40, 16 * (1 - k * 2.4), s)
 
 
+class EyeShot(Overlay):
+    """The reverse of Pew3D: instead of a bullet flying OUT of the screen at
+    the viewer, this is the viewer's shot flying INTO the screen at the bot.
+    A tracer starts big and close (like it just left the muzzle right at the
+    camera) and rockets away into the depth of the scene, shrinking as it
+    goes, until it lands square on one eye. That eye shatters into a small
+    spiderweb of cracks with a few shards flicking loose and falling, while
+    the other eye stays open and flinches wide at the hit -- then the
+    cracked eye knits back together with a satisfied little pop and a
+    spark, good as new. Re-picks left/right eye each cycle for variety and
+    runs on its own clock, independent of the eye controller's tween timer.
+    """
+
+    CYCLE = 3.4
+    P_FLY = 0.42
+    P_IMPACT = 0.10
+    P_CRACK = 0.95
+    P_HEAL = 0.45
+    P_REST = CYCLE - (P_FLY + P_IMPACT + P_CRACK + P_HEAL)
+
+    def __init__(self, rng):
+        super().__init__(rng)
+        self.local_t = 0.0
+        self._roll_cycle()
+
+    def _roll_cycle(self):
+        r = self.rng
+        self.target_x = EYE_R if r.random() < 0.5 else EYE_L
+        # jagged crack polylines radiating from the impact point, sized to
+        # roughly one eye's footprint rather than the whole face
+        self.cracks = []
+        for i in range(7):
+            a = i / 7 * 2 * math.pi + r.uniform(-0.3, 0.3)
+            pts, rad = [(self.target_x, EYE_CY)], 3.0
+            while rad < 20:
+                aa = a + r.uniform(-0.22, 0.22)
+                pts.append((self.target_x + math.cos(aa) * rad,
+                            EYE_CY + math.sin(aa) * rad * 0.8))
+                rad += r.uniform(4, 7)
+            self.cracks.append({"pts": pts, "fall": r.uniform(0.6, 1.4)})
+        self.shards = [{"a": r.uniform(0, 2 * math.pi), "sp": r.uniform(0.5, 1.1),
+                        "sz": r.uniform(1.2, 2.6)} for _ in range(7)]
+
+    def step(self, dt):
+        self.local_t += dt
+        if self.local_t >= self.CYCLE:
+            self.local_t -= self.CYCLE
+            self._roll_cycle()
+
+    def _phase(self):
+        t = self.local_t
+        for name, dur in (("fly", self.P_FLY), ("impact", self.P_IMPACT),
+                          ("crack", self.P_CRACK), ("heal", self.P_HEAL)):
+            if t < dur:
+                return name, t / dur
+            t -= dur
+        return "rest", min(1.0, t / self.P_REST)
+
+    def modify(self, left, right, t):
+        phase, k = self._phase()
+        target = right if self.target_x == EYE_R else left
+        other = left if target is right else right
+
+        if phase == "fly":
+            flinch = k * k
+            target["top_lid"] = max(target["top_lid"], 0.10 * flinch)
+            other["w"] *= 1.0 + 0.04 * flinch
+        elif phase in ("impact", "crack"):
+            # the real eye is gone -- the crack glyph in draw() takes over
+            target["scale"] = 0.0
+            other["w"] *= 1.12
+            other["h"] *= 1.12
+            other["top_lid"] = 0.0
+            if phase == "crack":
+                other["dx"] += math.sin(t * 30) * 0.6 * max(0.0, 1.0 - k * 1.5)
+        elif phase == "heal":
+            e = _ease_out(k)
+            target["scale"] = min(1.0, e * 1.08)
+            other["w"] *= 1.0 + 0.06 * (1 - e)
+            other["h"] *= 1.0 + 0.06 * (1 - e)
+
+    def _draw_tracer(self, d, s, k):
+        # recedes from right at the camera toward the target eye, shrinking
+        # and trailing a speed-line burst as it tunnels away from the viewer
+        e = k ** 1.6
+        x = 64 + (self.target_x - 64) * e
+        r = 30 * (1 - e) + 1.5
+        for i in range(10):
+            a = i / 10 * 2 * math.pi
+            r0 = r * 0.4
+            r1 = r0 + 4 + (1 - e) * 10
+            d.line([((x + math.cos(a) * r0) * s, (EYE_CY + math.sin(a) * r0 * 0.8) * s),
+                    ((x + math.cos(a) * r1) * s, (EYE_CY + math.sin(a) * r1 * 0.8) * s)],
+                   fill=255, width=max(1, int(s * 0.6)))
+        d.ellipse([(x - r) * s, (EYE_CY - r * 0.8) * s,
+                   (x + r) * s, (EYE_CY + r * 0.8) * s], fill=255)
+        if r > 5:
+            a = self.local_t * 14
+            px, py = math.cos(a), math.sin(a)
+            d.line([((x - px * r * 0.8) * s, (EYE_CY - py * r * 0.6) * s),
+                    ((x + px * r * 0.8) * s, (EYE_CY + py * r * 0.6) * s)],
+                   fill=0, width=max(2, int(r * s * 0.16)))
+
+    def draw(self, d, s, t):
+        phase, k = self._phase()
+
+        if phase == "fly":
+            self._draw_tracer(d, s, k)
+
+        elif phase == "impact":
+            if int(self.local_t * 70) % 3:
+                r = 18
+                d.ellipse([(self.target_x - r) * s, (EYE_CY - r * 0.8) * s,
+                           (self.target_x + r) * s, (EYE_CY + r * 0.8) * s], fill=255)
+
+        elif phase == "crack":
+            reveal = min(1.0, k * 3.2)
+            drop_k = max(0.0, (k - 0.45) / 0.55) ** 2
+            wdt = max(1, int(s * 0.9))
+            for cr in self.cracks:
+                pts = cr["pts"]
+                n = max(2, int(1 + reveal * (len(pts) - 1)))
+                dy_off = drop_k * 26 * cr["fall"]
+                seg = [(x * s, (y + dy_off) * s) for x, y in pts[:n]]
+                d.line(seg, fill=255, width=wdt)
+            if k < 0.85:
+                ke = 1.0 - (1.0 - min(1.0, k * 2.2)) ** 2
+                for sh in self.shards:
+                    dist = (2 + ke * 16) * sh["sp"]
+                    x = self.target_x + math.cos(sh["a"]) * dist
+                    y = EYE_CY + math.sin(sh["a"]) * dist * 0.7 + k * k * 22
+                    z = sh["sz"] * s
+                    d.rectangle([x * s, y * s, x * s + z, y * s + z], fill=255)
+            if k < 0.5:  # dim eye-socket ring so it doesn't read as a hole
+                rr = 3 + k * 6
+                d.ellipse([(self.target_x - rr) * s, (EYE_CY - rr * 0.8) * s,
+                           (self.target_x + rr) * s, (EYE_CY + rr * 0.8) * s],
+                          outline=255, width=max(1, int(s * 0.7)))
+
+        elif phase == "heal":
+            if k < 0.35:
+                _spark(d, self.target_x, EYE_CY, 10 * (1 - k / 0.35), s)
+
+
 class Glasses(Overlay):
     """Deal-with-it sunglasses drop in from the top and land with a springy
     overshoot. The eyes shrink down into little pupils that stay visible
@@ -1503,6 +1647,7 @@ ANIMATIONS: dict[str, tuple[str, dict | None, type[Overlay]]] = {
     "rage":      ("furious", None, Rage),
     "confused":  ("skeptic", {"dx": -6.0}, Confused),
     "pew3d":     ("surprised", None, Pew3D),
+    "eyeshot":   ("surprised", None, EyeShot),
     "glasses":   ("neutral", {"dy": -1.0}, Glasses),
     "blast":     ("scared", {"w": 27.0}, Blast),
     "freeze":    ("sad", {"h": 36.0}, Freeze),

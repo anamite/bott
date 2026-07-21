@@ -60,7 +60,7 @@ EXPRESSIONS: dict[str, dict] = {
     "sleep":      {"open": 0.0, "dy": 4.0},
     "suspicious": {"top_lid": 0.42, "bot_lid": 0.14},
     "skeptic":    {"top_lid": 0.38, "r": {"top_lid": 0.08}},
-    "wink":       {"bot_curve": 0.45, "r": {"open": 0.0, "bot_curve": 0.0}},
+    "wink":       {"bot_curve": 0.45, "r": {"bot_curve": 0.0}},
     "love":       {"mode": "heart"},
     "dizzy":      {"mode": "cross"},
     "bored":      {"top_lid": 0.48, "dx": 5.0},
@@ -233,6 +233,12 @@ class EyeController:
         self._next_blink = self._blink_delay()
         self._blink_amount = 0.0        # 0 open .. 1 closed
 
+        # one-shot wink: the right eye actually closes and reopens instead
+        # of sitting statically shut (see _update_wink)
+        self._wink_phase = "idle"       # idle | closing | hold | opening | done
+        self._wink_t = 0.0
+        self._wink_amount = 0.0         # 0 open .. 1 closed, right eye only
+
         # gaze (saccades + external look-at)
         self._gaze = [0.0, 0.0]
         self._gaze_target = [0.0, 0.0]
@@ -243,6 +249,13 @@ class EyeController:
         self.animation: str | None = None
         self._overlay = None
         self._anim_t = 0.0
+
+        # jelly secondary motion (see _jelly_wobble): underdamped spring
+        # driven by gaze motion, so movement makes the eyes jiggle/ring
+        # instead of just trailing behind it
+        self._jelly_pos = [0.0, 0.0]
+        self._jelly_vel = [0.0, 0.0]
+        self._prev_gaze = [0.0, 0.0]
 
     # -- public API ---------------------------------------------------------
 
@@ -256,6 +269,9 @@ class EyeController:
         self._overlay = None
         self._t = 0.0
         self._dur = max(0.01, duration)
+        if name == "wink":
+            self._wink_phase = "closing"
+            self._wink_t = 0.0
 
     def set_animation(self, name: str, duration: float = 0.28):
         """Play a named overlay animation (see overlays.ANIMATIONS)."""
@@ -312,7 +328,7 @@ class EyeController:
         return out[0], out[1]
 
     def _update_blink(self, dt: float):
-        if self.expression in ("sleep", "wink"):
+        if self.expression == "sleep":
             self._blink_amount = 0.0
             return
         if self._blink_phase == "open":
@@ -334,6 +350,35 @@ class EyeController:
                 # occasional double blink
                 self._next_blink = 0.15 if self.rng.random() < 0.12 \
                     else self._blink_delay()
+
+    def _update_wink(self, dt: float):
+        """Right eye actually closes, holds a beat, then reopens -- a real
+        wink instead of a statically shut eyelid. Fires once per
+        set_expression('wink', ...) call, then sits open until re-triggered.
+        """
+        if self.expression != "wink":
+            self._wink_phase = "idle"
+            self._wink_amount = 0.0
+            return
+        if self._wink_phase in ("idle", "done"):
+            return
+        if self._wink_phase == "closing":
+            self._wink_t += dt
+            self._wink_amount = min(1.0, self._wink_t / 0.08)
+            if self._wink_amount >= 1.0:
+                self._wink_phase = "hold"
+                self._wink_t = 0.0
+        elif self._wink_phase == "hold":
+            self._wink_t += dt
+            self._wink_amount = 1.0
+            if self._wink_t >= 0.18:
+                self._wink_phase = "opening"
+                self._wink_t = 0.0
+        else:  # opening
+            self._wink_t += dt
+            self._wink_amount = max(0.0, 1.0 - self._wink_t / 0.16)
+            if self._wink_amount <= 0.0:
+                self._wink_phase = "done"
 
     def _update_gaze(self, dt: float):
         if self._external_gaze is not None:
@@ -374,24 +419,64 @@ class EyeController:
             for p in (left, right):
                 p["top_lid"] = min(0.75, p["top_lid"] + droop * 0.12)
 
+    # spring tuning for _jelly_wobble: underdamped (DAMP < 2*sqrt(STIFF))
+    # so a gaze move makes the shape ring for a couple of beats before
+    # settling, instead of a dead first-order lag
+    _JELLY_STIFF = 170.0
+    _JELLY_DAMP = 10.5
+    _JELLY_KICK = 2.6
+
+    def _jelly_wobble(self, left: dict, right: dict, dt: float):
+        """Always-on gelatin secondary motion: a soft idle micro-wobble so
+        the eyes never sit perfectly rigid, plus an underdamped spring that
+        gaze motion kicks -- so whenever the eyes move (saccade, look_at,
+        expression drift) the shape squashes/stretches and jiggles for a
+        beat like real gel before settling, instead of a static rigid tween.
+        Runs last so it layers under every expression and animation without
+        touching their logic.
+        """
+        idle_w = math.sin(self._time * 3.1) * 0.65 + math.sin(self._time * 4.7 + 1.3) * 0.4
+        idle_h = math.sin(self._time * 2.6 + 0.9) * 0.55 + math.sin(self._time * 5.3 + 2.1) * 0.3
+
+        gdx = self._gaze[0] - self._prev_gaze[0]
+        gdy = self._gaze[1] - self._prev_gaze[1]
+        self._prev_gaze[0], self._prev_gaze[1] = self._gaze[0], self._gaze[1]
+        self._jelly_vel[0] += gdx * self._JELLY_KICK
+        self._jelly_vel[1] += gdy * self._JELLY_KICK
+
+        for i in (0, 1):
+            acc = -self._JELLY_STIFF * self._jelly_pos[i] - self._JELLY_DAMP * self._jelly_vel[i]
+            self._jelly_vel[i] += acc * dt
+            self._jelly_pos[i] += self._jelly_vel[i] * dt
+            self._jelly_pos[i] = max(-4.0, min(4.0, self._jelly_pos[i]))
+        sx, sy = self._jelly_pos
+
+        for p in (left, right):
+            p["w"] += idle_w + sx * 1.3 - sy * 0.55
+            p["h"] += idle_h + sy * 1.3 - sx * 0.55
+
     def update(self, dt: float) -> Image.Image:
         self._time += dt
         if self._t < 1.0:
             self._t = min(1.0, self._t + dt / self._dur)
         self._update_blink(dt)
+        self._update_wink(dt)
         self._update_gaze(dt)
 
         left, right = self._current_pair()
 
         # breathing: barely visible slow height sway
         breath = 1.0 + 0.015 * math.sin(self._time * 2 * math.pi * 0.22)
-        for p in (left, right):
+        for i, p in enumerate((left, right)):
             p["h"] *= breath
             p["dx"] += self._gaze[0]
             p["dy"] += self._gaze[1] + (1.0 - breath) * 40
             p["open"] = p["open"] * (1.0 - self._blink_amount)
+            if i == 1:
+                p["open"] = p["open"] * (1.0 - self._wink_amount)
 
         self._micro_motion(left, right)
+        self._jelly_wobble(left, right, dt)
 
         decor = None
         if self._overlay is not None:
