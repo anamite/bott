@@ -2085,160 +2085,6 @@ class WeatherCloudy(_Weather):
         _puffcloud(d, cx - 17 + math.sin(t * 0.45 + 2) * 3, cy - 13, 9 * vis, s)
 
 
-# class Clock(_Weather):
-#     """Retro split-flap clock: the eyes glance up, shrink away, and a row
-#     of flip-clock cards drops in showing the live time as 24-hour HH:MM.
-#     Whenever a digit ticks over it does a quick mechanical flick --
-#     squashing flat and popping back with the new number, seam flashing
-#     on the beat -- the colon blinks like a heartbeat, and a little sun or
-#     moon glyph above tells day from night. Then the cards lift away and
-#     the eyes pop back in. Loops on its own clock.
-
-#     The displayed time is freely settable at runtime via
-#     set_clock_time(hour, minute); call it with no arguments (or None,
-#     None) to follow the live system clock again.
-#     """
-
-#     CYCLE = 7.0
-#     P_LOOK = 0.8
-#     P_IN = 0.5
-#     P_SHOW = 4.2
-#     P_OUT = 0.5
-#     P_REST = CYCLE - (P_LOOK + P_IN + P_SHOW + P_OUT)
-
-#     CX, CY = 64, 33
-#     CARD_W, CARD_H = 13.0, 20.0
-#     GAP, COLON_W, COLON_GAP = 2.5, 6.0, 5.0
-#     FLIP_DUR = 0.30
-
-#     HOUR: int | None = None
-#     MINUTE: int | None = None
-
-#     def __init__(self, rng):
-#         super().__init__(rng)
-#         h, m = self._time_now()
-#         self.chars = list(f"{h:02d}{m:02d}")
-#         self.flip = [None, None, None, None]   # [from_char, to_char, age] | None
-#         self._last_hm = (h, m)
-
-#     def _time_now(self):
-#         if self.HOUR is not None and self.MINUTE is not None:
-#             return self.HOUR % 24, self.MINUTE % 60
-#         tm = time.localtime()
-#         return tm.tm_hour, tm.tm_min
-
-#     def step(self, dt):
-#         super().step(dt)
-#         hm = self._time_now()
-#         if hm != self._last_hm:
-#             self._last_hm = hm
-#             new_chars = list(f"{hm[0]:02d}{hm[1]:02d}")
-#             for i, new in enumerate(new_chars):
-#                 if new != self.chars[i] and self.flip[i] is None:
-#                     self.flip[i] = [self.chars[i], new, 0.0]
-#         for i, fl in enumerate(self.flip):
-#             if fl is None:
-#                 continue
-#             fl[2] += dt
-#             if fl[2] >= self.FLIP_DUR:
-#                 self.chars[i] = fl[1]
-#                 self.flip[i] = None
-
-#     def _stroke_digit(self, d, ch, cx, cy, w, h, s, wdt):
-#         for line in self._SEG.get(ch, ()):
-#             d.line([((cx - w / 2 + px * w) * s, (cy - h / 2 + py * h / 2) * s)
-#                     for px, py in line], fill=255, width=wdt, joint="curve")
-
-#     def _card(self, d, s, cx, cy, i, vis):
-#         w, h = self.CARD_W * vis, self.CARD_H * vis
-#         if w < 1.5:
-#             return
-#         wdt = max(1, int(s * 0.9 * vis))
-#         d.rounded_rectangle([(cx - w / 2) * s, (cy - h / 2) * s,
-#                              (cx + w / 2) * s, (cy + h / 2) * s],
-#                             radius=2 * s * vis, outline=255, width=wdt)
-#         seam_w = wdt
-#         fl = self.flip[i]
-#         if fl is None:
-#             ch, squash = self.chars[i], 1.0
-#         else:
-#             k = min(1.0, fl[2] / self.FLIP_DUR)
-#             squash = abs(math.cos(k * math.pi))
-#             ch = fl[0] if k < 0.5 else fl[1]
-#             if 0.45 < k < 0.55:      # mechanical "clack" flash on the seam
-#                 seam_w = max(wdt + 1, int(s * 1.7 * vis))
-#         d.line([(cx - w / 2) * s, cy * s, (cx + w / 2) * s, cy * s],
-#                fill=255, width=seam_w)
-#         dh = h * max(0.08, squash)
-#         self._stroke_digit(d, ch, cx, cy, w * 0.62, dh * 0.92, s,
-#                            max(1, int(s * 1.1 * vis)))
-
-#     def _colon(self, d, s, cx, cy, h, vis):
-#         r = 1.3 * vis
-#         if r < 0.4 or int(time.time() * 2) % 2:
-#             return
-#         for dy in (-h * 0.18, h * 0.18):
-#             d.ellipse([(cx - r) * s, (cy + dy - r) * s,
-#                        (cx + r) * s, (cy + dy + r) * s], fill=255)
-
-#     def _daynight(self, d, s, cx, cy, hour, vis):
-#         r = 4.2 * vis
-#         if r < 1.0:
-#             return
-#         if 6 <= hour < 18:
-#             d.ellipse([(cx - r) * s, (cy - r) * s, (cx + r) * s, (cy + r) * s],
-#                       fill=255)
-#             for i in range(6):
-#                 a = i * math.pi / 3 + self.local_t * 0.6
-#                 d.line([((cx + math.cos(a) * (r + 1.5)) * s,
-#                          (cy + math.sin(a) * (r + 1.5)) * s),
-#                         ((cx + math.cos(a) * (r + 3.5)) * s,
-#                          (cy + math.sin(a) * (r + 3.5)) * s)],
-#                        fill=255, width=max(1, int(s * 0.8)))
-#         else:
-#             d.ellipse([(cx - r) * s, (cy - r) * s, (cx + r) * s, (cy + r) * s],
-#                       fill=255)
-#             off = r * 0.55
-#             d.ellipse([(cx - r + off) * s, (cy - r) * s,
-#                        (cx + r + off) * s, (cy + r) * s], fill=0)
-#             for sx, sy in ((cx - r * 2.2, cy - r * 1.2),
-#                            (cx - r * 2.8, cy + r * 0.7)):
-#                 _spark(d, sx, sy, 2.2 * vis, s)
-
-#     def draw(self, d, s, t):
-#         vis = self._vis()
-#         if vis <= 0.03:
-#             return
-
-#         hour = self._last_hm[0]
-#         self._daynight(d, s, self.CX, self.CY - 19, hour, vis)
-
-#         widths = [self.CARD_W, self.CARD_W, self.COLON_W,
-#                   self.CARD_W, self.CARD_W]
-#         gaps = [self.GAP, self.COLON_GAP, self.COLON_GAP, self.GAP]
-#         total = sum(widths) + sum(gaps)
-#         x = self.CX - total * vis / 2
-#         cy = self.CY
-
-#         for slot, w in enumerate(widths):
-#             cx = x + w * vis / 2
-#             if slot in (0, 1):
-#                 self._card(d, s, cx, cy, slot, vis)
-#             elif slot == 2:
-#                 self._colon(d, s, cx, cy, self.CARD_H * vis, vis)
-#             else:
-#                 self._card(d, s, cx, cy, slot - 1, vis)
-#             x += w * vis
-#             if slot < len(gaps):
-#                 x += gaps[slot] * vis
-
-
-# def set_clock_time(hour: int | None = None, minute: int | None = None):
-#     """Pin the time shown by the 'time' animation, or pass no arguments
-#     (or (None, None)) to make it follow the live system clock again."""
-#     Clock.HOUR = hour
-#     Clock.MINUTE = minute
-
 class Clock(_Weather):
     """Funky flip clock: the eyes glance up and shrink away, then four big
     digits bounce in one after another -- each drops from above, squashes,
@@ -2450,6 +2296,256 @@ def set_clock_time(hour: int | None = None, minute: int | None = None):
     Clock.MINUTE = minute
 
 
+class Menu(Overlay):
+    """Tool catalog: the eyes glance up and shrink away, then three tool
+    icons -- weather (sun), time (clock), settings (gear) -- spring up
+    from below one after another. A funky HUD selector with corner
+    brackets glides from icon to icon, pausing on each: the focused icon
+    swells and comes alive (sun rays spin, clock hands sweep, gear turns)
+    while the others sit small and calm. Little pagination dots below
+    track the position. After visiting all three the icons launch away
+    and the eyes pop back in with a springy overshoot. Loops on its own
+    clock.
+    """
+
+    CYCLE = 7.0
+    P_LOOK = 0.6
+    P_OPEN = 0.7
+    DWELL = 1.0
+    TRAVEL = 0.55
+    P_CYCLE = 3 * DWELL + 2 * TRAVEL          # 4.1
+    P_CLOSE = 0.7
+    P_BACK = CYCLE - (P_LOOK + P_OPEN + P_CYCLE + P_CLOSE)
+
+    CX, CY = 64, 33
+    SPACING = 26.0                            # gap between icon centers
+    R_ICON = 9.0
+    STAGGER = 0.12
+
+    def __init__(self, rng):
+        super().__init__(rng)
+        self.local_t = 0.0
+
+    def step(self, dt):
+        self.local_t += dt
+        if self.local_t >= self.CYCLE:
+            self.local_t -= self.CYCLE
+
+    # ------------------------------------------------------------------ #
+    # easing
+    @staticmethod
+    def _smooth(k):
+        k = max(0.0, min(1.0, k))
+        return k * k * (3.0 - 2.0 * k)
+
+    @staticmethod
+    def _back_out(k):
+        c = 1.9
+        k -= 1.0
+        return 1.0 + k * k * ((c + 1.0) * k + c)
+
+    def _phase(self):
+        t = self.local_t
+        for name, dur in (("look", self.P_LOOK), ("open", self.P_OPEN),
+                          ("cycle", self.P_CYCLE), ("close", self.P_CLOSE)):
+            if t < dur:
+                return name, t / dur, t
+            t -= dur
+        return "back", min(1.0, t / self.P_BACK), t
+
+    def _icon_x(self, i):
+        return self.CX + (i - 1) * self.SPACING
+
+    # continuous focus position over the cycle window -------------------
+    def _focus(self):
+        """returns (f, settled) with f in 0..2 (which icon the selector is
+        on) and settled 0..1 (1 = parked on an icon, dips while travelling)"""
+        ct = self.local_t - (self.P_LOOK + self.P_OPEN)
+        segs = [(self.DWELL, 0, 0), (self.TRAVEL, 0, 1), (self.DWELL, 1, 1),
+                (self.TRAVEL, 1, 2), (self.DWELL, 2, 2)]
+        for dur, a, b, in segs:
+            if ct < dur:
+                if a == b:                    # dwell
+                    return float(a), 1.0
+                k = ct / dur                  # travel
+                f = a + (b - a) * self._smooth(k)
+                return f, 1.0 - math.sin(k * math.pi) * 0.6
+            ct -= dur
+        return 2.0, 1.0
+
+    # per-icon entrance / exit ------------------------------------------
+    def _icon_anim(self, i):
+        """returns (vis, dy, pop) for staggered spring-in / launch-out"""
+        t = self.local_t
+        in_start = self.P_LOOK + i * self.STAGGER
+        in_dur = self.P_OPEN - 2 * self.STAGGER
+        out_start = self.P_LOOK + self.P_OPEN + self.P_CYCLE + i * self.STAGGER
+        out_dur = self.P_CLOSE - 2 * self.STAGGER
+
+        if t < in_start:
+            return 0.0, 0.0, 1.0
+        if t < in_start + in_dur:                    # spring up from below
+            k = (t - in_start) / in_dur
+            e = self._back_out(k)
+            dy = 22.0 * (1.0 - e)
+            pop = 1.0 - 0.3 * math.sin(min(1.0, k * 1.3) * math.pi)
+            return min(1.0, k * 3.0), dy, max(0.6, pop)
+        if t < out_start:                            # steady: gentle bob
+            return 1.0, math.sin(self.local_t * 2.0 + i * 0.9) * 0.7, 1.0
+        if t < out_start + out_dur:                  # launch upward + fade
+            k = (t - out_start) / out_dur
+            e = self._smooth(k)
+            return 1.0 - e, -28.0 * e * e, 1.0
+        return 0.0, 0.0, 1.0
+
+    # ------------------------------------------------------------------ #
+    def modify(self, left, right, t):
+        phase, k, _ = self._phase()
+        if phase == "look":                          # glance up, slight squint
+            e = self._smooth(k)
+            for p in (left, right):
+                p["dy"] -= 3.0 * e
+                p["h"] *= 1.0 - 0.15 * e
+        elif phase == "open":                        # shrink up and away
+            e = self._smooth(k)
+            for p in (left, right):
+                p["dy"] -= (3.0 + 6.0 * e)
+                p["scale"] = max(0.0, 1.0 - e)
+        elif phase in ("cycle", "close"):
+            for p in (left, right):
+                p["scale"] = 0.0
+        else:                                        # back: pop in w/ spring
+            e = self._back_out(min(1.0, k * 1.15))
+            wob = math.sin(self.local_t * 17.0) * 0.7 * max(0.0, 1.0 - k * 2.0)
+            for p in (left, right):
+                p["scale"] = max(0.0, e)
+                p["dx"] += wob
+                p["dy"] -= 3.0 * (1.0 - self._smooth(min(1.0, k * 1.5)))
+
+    # ------------------------------------------------------------------ #
+    # icon painters (outline / stroke style to match the digits)
+    def _sun(self, d, s, cx, cy, r, energy, wdt):
+        rr = r * 0.5
+        d.ellipse([(cx - rr) * s, (cy - rr) * s, (cx + rr) * s, (cy + rr) * s],
+                  fill=255)
+        a0 = self.local_t * (0.6 + energy * 2.4)
+        i0, i1 = r * 0.62, r * 0.62 + 2.2 + energy * 1.8
+        for i in range(8):
+            a = a0 + i * math.pi / 4
+            d.line([((cx + math.cos(a) * i0) * s, (cy + math.sin(a) * i0) * s),
+                    ((cx + math.cos(a) * i1) * s, (cy + math.sin(a) * i1) * s)],
+                   fill=255, width=wdt)
+
+    def _clock(self, d, s, cx, cy, r, energy, wdt):
+        rr = r * 0.72
+        d.ellipse([(cx - rr) * s, (cy - rr) * s, (cx + rr) * s, (cy + rr) * s],
+                  outline=255, width=wdt)
+        for i in range(4):                           # 4 quarter ticks
+            a = i * math.pi / 2
+            d.line([((cx + math.cos(a) * rr * 0.78) * s,
+                     (cy + math.sin(a) * rr * 0.78) * s),
+                    ((cx + math.cos(a) * rr * 0.98) * s,
+                     (cy + math.sin(a) * rr * 0.98) * s)],
+                   fill=255, width=max(1, wdt - 1))
+        base = -math.pi / 2
+        ha = base + self.local_t * (0.5 + energy * 3.5)
+        ma = base + self.local_t * (1.3 + energy * 7.0)
+        for a, ln in ((ha, 0.42), (ma, 0.62)):
+            d.line([(cx * s, cy * s),
+                    ((cx + math.cos(a) * rr * ln) * s,
+                     (cy + math.sin(a) * rr * ln) * s)], fill=255, width=wdt)
+        d.ellipse([(cx - 1.1) * s, (cy - 1.1) * s,
+                   (cx + 1.1) * s, (cy + 1.1) * s], fill=255)
+
+    def _gear(self, d, s, cx, cy, r, energy, wdt):
+        rr = r * 0.6
+        rot = -self.local_t * (0.5 + energy * 2.2)
+        for i in range(8):                           # teeth
+            a = rot + i * math.pi / 4
+            d.line([((cx + math.cos(a) * rr) * s, (cy + math.sin(a) * rr) * s),
+                    ((cx + math.cos(a) * (rr + 2.6)) * s,
+                     (cy + math.sin(a) * (rr + 2.6)) * s)],
+                   fill=255, width=max(2, wdt + 1))
+        d.ellipse([(cx - rr) * s, (cy - rr) * s, (cx + rr) * s, (cy + rr) * s],
+                  outline=255, width=wdt)
+        ri = rr * 0.4
+        d.ellipse([(cx - ri) * s, (cy - ri) * s, (cx + ri) * s, (cy + ri) * s],
+                  outline=255, width=wdt)
+
+    def _selector(self, d, s, cx, cy, half, settled):
+        breathe = 1.0 + 0.06 * math.sin(self.local_t * 4.0)
+        h = half * breathe
+        # faint full frame
+        d.rounded_rectangle([(cx - h) * s, (cy - h) * s,
+                             (cx + h) * s, (cy + h) * s],
+                            radius=3 * s, outline=255, width=max(1, int(s)))
+        # bold corner brackets -- brighter/longer when freshly parked
+        seg = h * (0.42 + 0.12 * settled)
+        bw = max(2, int(s * (1.0 + settled)))
+        for sx in (-1, 1):
+            for sy in (-1, 1):
+                x, y = cx + sx * h, cy + sy * h
+                d.line([(x * s, y * s), ((x - sx * seg) * s, y * s)],
+                       fill=255, width=bw)
+                d.line([(x * s, y * s), (x * s, (y - sy * seg) * s)],
+                       fill=255, width=bw)
+
+    def _dots(self, d, s, f, vis):
+        if vis <= 0.1:
+            return
+        y = self.CY + self.R_ICON + 8.0
+        active = int(round(f))
+        for i in range(3):
+            x = self.CX + (i - 1) * 8.0
+            on = (i == active)
+            r = (1.9 if on else 1.0) * vis
+            if r < 0.4:
+                continue
+            if on:
+                d.ellipse([(x - r) * s, (y - r) * s, (x + r) * s, (y + r) * s],
+                          fill=255)
+            else:
+                d.ellipse([(x - r) * s, (y - r) * s, (x + r) * s, (y + r) * s],
+                          outline=255, width=max(1, int(s)))
+
+    # ------------------------------------------------------------------ #
+    def draw(self, d, s, t):
+        phase, k, _ = self._phase()
+        if phase in ("look",):
+            return
+
+        f, settled = self._focus()
+        painters = (self._sun, self._clock, self._gear)
+
+        # pagination dots ride with the center icon's presence
+        self._dots(d, s, f, self._icon_anim(1)[0])
+
+        for i, paint in enumerate(painters):
+            vis, dy, pop = self._icon_anim(i)
+            if vis <= 0.03:
+                continue
+            focus_amt = max(0.0, 1.0 - abs(i - f))
+            scale = (0.82 + 0.34 * focus_amt) * pop
+            r = self.R_ICON * scale * vis
+            if r < 1.0:
+                continue
+            cx = self._icon_x(i)
+            cy = self.CY + dy
+            wdt = max(1, int(round(s * 1.1 * vis)))
+            paint(d, s, cx, cy, r, focus_amt, wdt)
+
+        # selector: only while cycling, fading in/out at the edges
+        if phase == "cycle":
+            ct = self.local_t - (self.P_LOOK + self.P_OPEN)
+            edge = min(self._smooth(ct / 0.3),
+                       self._smooth((self.P_CYCLE - ct) / 0.3))
+            if edge > 0.05:
+                sx = self.CX + (f - 1) * self.SPACING
+                focus_amt = max(0.0, 1.0 - abs(round(f) - f))
+                half = (self.R_ICON * (1.16 + 0.34 * focus_amt) + 3.0) * edge
+                self._selector(d, s, sx, self.CY, half, settled)
+
+
 def set_weather_temp(value: float, kind: str | None = None):
     """Set the temperature (°C) shown by the weather animations.
 
@@ -2493,4 +2589,5 @@ ANIMATIONS: dict[str, tuple[str, dict | None, type[Overlay]]] = {
     "winter":    ("neutral", None, WeatherWinter),
     "cloudy":    ("neutral", None, WeatherCloudy),
     "time":      ("neutral", None, Clock),
+    "menu":      ("neutral", None, Menu),
 }
