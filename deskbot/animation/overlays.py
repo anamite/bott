@@ -1633,6 +1633,289 @@ class Hack(Overlay):
                        fill=255, width=max(2, int(s * 1.4)))
 
 
+def _puffcloud(d, cx, cy, size, s, halo=0.0):
+    """Solid puffy cloud with a flat base; overlapping puffs so it reads as
+    one shape at weather-icon sizes. halo > 0 punches a black outline ring
+    first so the cloud reads on top of things behind it."""
+    if size < 2.0:
+        return
+    puffs = ((-0.42, -0.02, 0.34), (0.0, -0.22, 0.44), (0.42, -0.02, 0.34))
+    if halo > 0:
+        for ox, oy, rf in puffs:
+            cr = size * rf + halo
+            d.ellipse([(cx + ox * size - cr) * s, (cy + oy * size - cr) * s,
+                       (cx + ox * size + cr) * s, (cy + oy * size + cr) * s],
+                      fill=0)
+        d.rectangle([(cx - 0.55 * size) * s, (cy - halo) * s,
+                     (cx + 0.55 * size) * s, (cy + 0.30 * size + halo) * s],
+                    fill=0)
+    for ox, oy, rf in puffs:
+        cr = size * rf
+        d.ellipse([(cx + ox * size - cr) * s, (cy + oy * size - cr) * s,
+                   (cx + ox * size + cr) * s, (cy + oy * size + cr) * s],
+                  fill=255)
+    d.rounded_rectangle([(cx - 0.55 * size) * s, cy * s,
+                         (cx + 0.55 * size) * s, (cy + 0.30 * size) * s],
+                        radius=0.12 * size * s, fill=255)
+
+
+class _Weather(Overlay):
+    """Base for the weather report animations: the eyes start normal, glance
+    up, then shrink away while an animated weather scene plays on the left
+    and the current temperature (°C) counts up big on the right; finally the
+    eyes pop back in. Loops on its own clock. Subclasses implement _scene().
+
+    The displayed temperature is freely settable at runtime via
+    set_weather_temp(value, kind) at module level, or by assigning the TEMP
+    class attribute (e.g. WeatherSunny.TEMP = 31.5).
+    """
+
+    CYCLE = 6.2
+    P_LOOK = 0.8      # normal eyes, little glance up at the "sky"
+    P_IN = 0.45       # eyes shrink away, scene grows in
+    P_SHOW = 3.4      # weather + temperature
+    P_OUT = 0.45      # scene shrinks, eyes pop back
+    P_REST = CYCLE - (P_LOOK + P_IN + P_SHOW + P_OUT)
+
+    ICON_X, ICON_Y = 33, 32   # weather icon center
+    TEMP_X, TEMP_Y = 90, 32   # temperature readout center
+
+    TEMP = 21.0               # degrees Celsius shown; override freely
+
+    def __init__(self, rng):
+        super().__init__(rng)
+        self.local_t = 0.0
+
+    def step(self, dt):
+        self.local_t += dt
+        if self.local_t >= self.CYCLE:
+            self.local_t -= self.CYCLE
+
+    def _phase(self):
+        t = self.local_t
+        for name, dur in (("look", self.P_LOOK), ("in", self.P_IN),
+                          ("show", self.P_SHOW), ("out", self.P_OUT)):
+            if t < dur:
+                return name, t / dur
+            t -= dur
+        return "rest", min(1.0, t / self.P_REST)
+
+    def _vis(self):
+        """Scene visibility 0..1 across in/show/out."""
+        phase, k = self._phase()
+        if phase == "in":
+            return _ease_out(k)
+        if phase == "show":
+            return 1.0
+        if phase == "out":
+            return 1.0 - _ease_out(k)
+        return 0.0
+
+    def modify(self, left, right, t):
+        phase, k = self._phase()
+        if phase == "look":
+            # notice the weather: glance up
+            e = _ease_out(min(1.0, k * 2.5))
+            for p in (left, right):
+                p["dy"] -= 3.0 * e
+        elif phase == "in":
+            for p in (left, right):
+                p["scale"] = 1.0 - _ease_out(k)
+        elif phase == "show":
+            for p in (left, right):
+                p["scale"] = 0.0
+        elif phase == "out":
+            for p in (left, right):
+                p["scale"] = _ease_out(k)
+
+    # -- temperature readout -------------------------------------------------
+
+    _SEG = {
+        "0": [[(0, 0), (1, 0), (1, 2), (0, 2), (0, 0)]],
+        "1": [[(0.5, 0), (0.5, 2)]],
+        "2": [[(0, 0), (1, 0), (1, 1), (0, 1), (0, 2), (1, 2)]],
+        "3": [[(0, 0), (1, 0), (1, 2), (0, 2)], [(0.35, 1), (1, 1)]],
+        "4": [[(0, 0), (0, 1), (1, 1)], [(1, 0), (1, 2)]],
+        "5": [[(1, 0), (0, 0), (0, 1), (1, 1), (1, 2), (0, 2)]],
+        "6": [[(1, 0), (0, 0), (0, 2), (1, 2), (1, 1), (0, 1)]],
+        "7": [[(0, 0), (1, 0), (0.55, 2)]],
+        "8": [[(0, 0), (1, 0), (1, 2), (0, 2), (0, 0)], [(0, 1), (1, 1)]],
+        "9": [[(1, 1), (0, 1), (0, 0), (1, 0), (1, 2), (0, 2)]],
+        "-": [[(0, 1), (1, 1)]],
+        "C": [[(1, 0.15), (0.15, 0.15), (0.15, 2), (1, 2)]],
+    }
+
+    def _draw_temp(self, d, s, vis):
+        txt = f"{int(round(float(self.TEMP)))}"
+        size = 11.0 * vis                 # digit height (logical px)
+        if size < 2.0:
+            return
+        dw, gap = size * 0.55, size * 0.28
+        deg_r = size * 0.16
+        # total width: digits + degree circle + C glyph
+        n = len(txt)
+        total = n * dw + (n - 1) * gap + gap + 2 * deg_r + gap + dw * 0.9
+        x = self.TEMP_X - total / 2 + (1.0 - vis) * 10   # slides in
+        cy = self.TEMP_Y
+        wdt = max(2, int(s * 1.35))
+
+        def stroke(char, ox, w):
+            for line in self._SEG[char]:
+                d.line([((ox + px * w) * s, (cy - size / 2 + py * size / 2) * s)
+                        for px, py in line], fill=255, width=wdt, joint="curve")
+
+        for ch in txt:
+            stroke(ch if ch in self._SEG else "-", x, dw)
+            x += dw + gap
+        # degree ring at the top
+        d.ellipse([x * s, (cy - size / 2) * s,
+                   (x + 2 * deg_r) * s, (cy - size / 2 + 2 * deg_r) * s],
+                  outline=255, width=max(2, int(s * 1.0)))
+        x += 2 * deg_r + gap
+        stroke("C", x, dw * 0.9)
+
+    def _scene(self, d, s, t, vis):
+        raise NotImplementedError
+
+    def draw(self, d, s, t):
+        vis = self._vis()
+        if vis <= 0.03:
+            return
+        self._scene(d, s, self.local_t, vis)
+        self._draw_temp(d, s, vis)
+
+
+class WeatherSunny(_Weather):
+    """Beaming sun: the disc pulses gently while its rays spin and breathe,
+    and a couple of heat-shimmer squiggles rise beside it."""
+
+    TEMP = 31.0
+
+    def _scene(self, d, s, t, vis):
+        cx, cy = self.ICON_X, self.ICON_Y
+        r = (9.5 + math.sin(t * 2.2) * 0.5) * vis
+        d.ellipse([(cx - r) * s, (cy - r) * s, (cx + r) * s, (cy + r) * s],
+                  fill=255)
+        spin = t * 0.9
+        wdt = max(2, int(s * 1.2))
+        for i in range(8):
+            a = spin + i * math.pi / 4
+            ln = (3.5 + math.sin(t * 3.0 + i * 1.3) * 1.6) * vis
+            r0 = r + 2.5
+            d.line([((cx + math.cos(a) * r0) * s, (cy + math.sin(a) * r0) * s),
+                    ((cx + math.cos(a) * (r0 + ln)) * s,
+                     (cy + math.sin(a) * (r0 + ln)) * s)],
+                   fill=255, width=wdt)
+        # occasional sparkle glinting off the sun
+        if vis > 0.6 and int(t * 2.0) % 3 == 0:
+            _spark(d, cx + 16, cy - 12, 5, s)
+
+
+class WeatherRainy(_Weather):
+    """Rain cloud: streaking angled raindrops fall out of a drifting cloud
+    and land with tiny splash ticks."""
+
+    TEMP = 17.0
+
+    def _scene(self, d, s, t, vis):
+        cx, cy = self.ICON_X, self.ICON_Y - 10
+        drift = math.sin(t * 0.8) * 1.5
+        _puffcloud(d, cx + drift, cy, 16 * vis, s)
+        wdt = max(2, int(s * 0.9))
+        # procedural rain: staggered streaks recycling from cloud to ground
+        for i in range(8):
+            ph = (t * 1.5 + i * 0.37) % 1.0
+            x = cx - 13 + i * 3.8 + drift * 0.5
+            y = cy + 7 + ph * 26 * vis
+            if ph < 0.88:
+                d.line([(x * s, y * s), ((x - 1.6) * s, (y + 4.5) * s)],
+                       fill=255, width=wdt)
+            else:  # splash tick at the bottom of the fall
+                sy = cy + 7 + 26 * vis + 4
+                d.line([((x - 3) * s, sy * s), ((x - 4.5) * s, (sy - 2) * s)],
+                       fill=255, width=wdt)
+                d.line([((x - 1) * s, sy * s), ((x + 0.5) * s, (sy - 2) * s)],
+                       fill=255, width=wdt)
+
+
+class WeatherWinter(_Weather):
+    """Winter: a big six-armed snowflake spins slowly while small flakes
+    drift down and a snow mound builds along the bottom."""
+
+    TEMP = -4.0
+
+    def _scene(self, d, s, t, vis):
+        cx, cy = self.ICON_X, self.ICON_Y - 2
+        r = 11 * vis
+        rot = t * 0.55
+        wdt = max(2, int(s * 1.0))
+        for i in range(6):
+            a = rot + i * math.pi / 3
+            dx, dy = math.cos(a), math.sin(a)
+            d.line([(cx * s, cy * s),
+                    ((cx + dx * r) * s, (cy + dy * r) * s)], fill=255, width=wdt)
+            # branch ticks partway out each arm
+            bx, by = cx + dx * r * 0.62, cy + dy * r * 0.62
+            for da in (0.55, -0.55):
+                d.line([(bx * s, by * s),
+                        ((bx + math.cos(a + da) * r * 0.3) * s,
+                         (by + math.sin(a + da) * r * 0.3) * s)],
+                       fill=255, width=wdt)
+        # small flakes drifting down around it
+        for i in range(5):
+            ph = (t * 0.35 + i * 0.21) % 1.0
+            x = 10 + i * 11 + math.sin(t * 1.5 + i) * 3
+            y = ph * (H + 8) - 4
+            if vis > 0.5:
+                _flake(d, x, y, 2.2, s)
+        # snow mound on the ground under the icon
+        my = H - 4 * vis
+        d.ellipse([(cx - 22) * s, my * s, (cx + 22) * s, (H + 6) * s], fill=255)
+
+
+class WeatherCloudy(_Weather):
+    """Cloudy: two puffy clouds drift past each other with a lazy bob, and
+    a sliver of sun occasionally peeks over the big one."""
+
+    TEMP = 22.0
+
+    def _scene(self, d, s, t, vis):
+        cx, cy = self.ICON_X, self.ICON_Y
+        # sun peeking out behind, mostly hidden
+        peek = max(0.0, math.sin(t * 0.5)) * 4
+        r = 7 * vis
+        sx, sy = cx + 9, cy - 9 - peek
+        d.ellipse([(sx - r) * s, (sy - r) * s, (sx + r) * s, (sy + r) * s],
+                  fill=255)
+        for i in range(6):
+            a = t * 0.8 + i * math.pi / 3
+            d.line([((sx + math.cos(a) * (r + 2)) * s,
+                     (sy + math.sin(a) * (r + 2)) * s),
+                    ((sx + math.cos(a) * (r + 4.5)) * s,
+                     (sy + math.sin(a) * (r + 4.5)) * s)],
+                   fill=255, width=max(2, int(s * 0.9)))
+        # big front cloud: black halo first so it reads on top of the sun
+        bx = cx + math.sin(t * 0.6) * 2.5
+        by = cy + 2 + math.sin(t * 1.1) * 1.0
+        _puffcloud(d, bx, by, 17 * vis, s, halo=1.6)
+        # small trailing cloud drifting the other way
+        _puffcloud(d, cx - 17 + math.sin(t * 0.45 + 2) * 3, cy - 13, 9 * vis, s)
+
+
+def set_weather_temp(value: float, kind: str | None = None):
+    """Set the temperature (°C) shown by the weather animations.
+
+    kind: 'sunny' | 'rainy' | 'winter' | 'cloudy', or None to set all four.
+    """
+    kinds = {"sunny": WeatherSunny, "rainy": WeatherRainy,
+             "winter": WeatherWinter, "cloudy": WeatherCloudy}
+    if kind is None:
+        for cls in kinds.values():
+            cls.TEMP = float(value)
+    else:
+        kinds[kind].TEMP = float(value)
+
+
 # name -> (base expression, eye parameter overrides, overlay class)
 ANIMATIONS: dict[str, tuple[str, dict | None, type[Overlay]]] = {
     "party":     ("joy", {"h": 34.0, "dy": -2.0}, Confetti),
@@ -1656,4 +1939,8 @@ ANIMATIONS: dict[str, tuple[str, dict | None, type[Overlay]]] = {
     "hypno":     ("neutral", None, Hypnotized),
     "sleep":     ("neutral", None, Sleep),
     "space":     ("neutral", None, SpaceGlasses),
+    "sunny":     ("neutral", None, WeatherSunny),
+    "rainy":     ("neutral", None, WeatherRainy),
+    "winter":    ("neutral", None, WeatherWinter),
+    "cloudy":    ("neutral", None, WeatherCloudy),
 }

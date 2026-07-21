@@ -7,7 +7,7 @@ Keys:
   s d f g h j k l z x v b n m , . /   animations (party, tired, thumbs_up,
                           pew, laugh, cry, hearts, shock, music, rage,
                           confused, pew3d, glasses, blast, freeze, drink,
-                          hack)
+                          hack, ... weather: sunny/rainy/winter/cloudy via TAB)
   TAB             cycle through everything
   SPACE           blink now
   A               toggle auto mode (random expressions + animations)
