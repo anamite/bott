@@ -141,13 +141,14 @@ _PEW_BURSTS = 4
 _RECOIL_DUR = _PEW_LEAD + _PEW_BURSTS * _PEW_PERIOD  # whole gesture length
 
 
-def _recoil(u):        # machine-gun recoil synced to overlays.Pew: one sharp
-    # pitch-up snap per round with a quick eased return, so a 3-round burst
-    # reads as tat-tat-tat kicks, then the head settles during the gap before
-    # the next burst -- pure recoil, no idle bobbing
+def _recoil(u):        # machine-gun recoil synced to overlays.Pew. The gun
+    # fires horizontally (bullets fly to the right across the screen), so the
+    # kick is mostly YAW back to the left -- the firing axis -- with a little
+    # pitch-up for muzzle climb. One snap per round: a 3-round burst reads as
+    # tat-tat-tat, then the head settles during the gap before the next burst.
     t = u * _RECOIL_DUR
+    yaw = 0.0
     pitch = 0.0
-    roll = 0.0
     for i in range(_PEW_BURSTS):
         bs = _PEW_LEAD + i * _PEW_PERIOD
         for r in range(_PEW.BURST_SIZE):
@@ -155,9 +156,9 @@ def _recoil(u):        # machine-gun recoil synced to overlays.Pew: one sharp
             if td < 0.0:
                 continue
             env = (1.0 - math.exp(-td / 0.010)) * math.exp(-td / 0.14)
-            pitch -= 7.0 * env                       # snap up/back per round
-            roll += 2.4 * math.sin(td * 40.0) * math.exp(-td / 0.14)
-    return (0.0, pitch, roll)
+            yaw -= 8.0 * env                          # snap back along the barrel
+            pitch -= 2.5 * env                        # slight muzzle climb
+    return (yaw, pitch, 0.0)
 
 
 # phase boundaries (fractions of u) lifted straight from overlays.Pew3D's own
