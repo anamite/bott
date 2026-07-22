@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import math
 
+from . import overlays
+
 
 # ---------------------------------------------------------------------------
 # envelope helpers, all defined on u in [0, 1]
@@ -128,6 +130,78 @@ def _sneeze(u):       # slow wind-up back... snap forward, settle
     return (0.0, p, 0.0)
 
 
+def _recoil(u):        # single quick gun-kick: fast backward snap, then a
+    # short damped ring before settling -- loop with cycles= for sustained
+    # gunfire (pairs with overlays.Pew, which fires bursts continuously)
+    e = _snap(u, 0.12)
+    ring = math.sin(u * 26) * max(0.0, u - 0.12) * 2.2
+    return (ring, -15.0 * e, 4.0 * math.sin(u * 20) * e)
+
+
+# phase boundaries (fractions of u) lifted straight from overlays.Pew3D's own
+# clock, so the neck's brace/jitter/slam/shake line up exactly with the
+# reticle-lock / warp-in / impact / glass-shatter beats on screen
+_P3D = overlays.Pew3D
+_P3D_LOCK = _P3D.P_LOCK / _P3D.CYCLE
+_P3D_FLY = _P3D_LOCK + _P3D.P_FLY / _P3D.CYCLE
+_P3D_IMPACT = _P3D_FLY + _P3D.P_IMPACT / _P3D.CYCLE
+_P3D_SHATTER = _P3D_IMPACT + _P3D.P_SHATTER / _P3D.CYCLE
+
+
+def _impact_slam(u):   # synced to overlays.Pew3D: brace while the reticle
+    # locks on, building jitter as the bullet screws in, a hard slam right on
+    # impact, then a decaying shake as the glass shatters and settles
+    if u < _P3D_LOCK:
+        return (0.0, -4.0 * _smooth(u / _P3D_LOCK), 0.0)
+    if u < _P3D_FLY:
+        k = (u - _P3D_LOCK) / (_P3D_FLY - _P3D_LOCK)
+        j = math.sin(k * 70) * k
+        return (1.5 * j, -4.0 + 5.0 * k, 1.5 * j)
+    if u < _P3D_IMPACT:
+        k = _smooth((u - _P3D_FLY) / (_P3D_IMPACT - _P3D_FLY))
+        return (0.0, 24.0 * k, -7.0 * k)
+    if u < _P3D_SHATTER:
+        k = (u - _P3D_IMPACT) / (_P3D_SHATTER - _P3D_IMPACT)
+        decay = 1.0 - k
+        return (5.0 * math.sin(k * 34) * decay, 8.0 * decay,
+                6.0 * math.sin(k * 27) * decay)
+    k = (u - _P3D_SHATTER) / max(1e-6, 1.0 - _P3D_SHATTER)
+    return (0.0, 6.0 * (1.0 - _smooth(k)), 0.0)
+
+
+# same idea for overlays.Blast: merge / fuse / flash / boom / smoke
+_BL = overlays.Blast
+_BL_MERGE = _BL.P_MERGE / _BL.CYCLE
+_BL_FUSE = _BL_MERGE + _BL.P_FUSE / _BL.CYCLE
+_BL_FLASH = _BL_FUSE + _BL.P_FLASH / _BL.CYCLE
+_BL_BOOM = _BL_FLASH + _BL.P_BOOM / _BL.CYCLE
+
+
+def _kaboom(u):         # synced to overlays.Blast: curious lean-in as the
+    # eyes merge into the bomb, a trembling wind-up as the fuse burns down, a
+    # sharp brace on the flash, a violent kick on detonation, then a dazed
+    # sway settling back to neutral as the smoke clears
+    if u < _BL_MERGE:
+        return (0.0, 6.0 * _smooth(u / _BL_MERGE), 0.0)
+    if u < _BL_FUSE:
+        k = (u - _BL_MERGE) / (_BL_FUSE - _BL_MERGE)
+        trem = math.sin(k * 70) * (0.5 + 2.5 * k)
+        return (0.4 * trem, 6.0 - 2.0 * k, trem)
+    if u < _BL_FLASH:
+        k = (u - _BL_FUSE) / (_BL_FLASH - _BL_FUSE)
+        return (0.0, -4.0 * _snap(k, 0.5), 0.0)
+    if u < _BL_BOOM:
+        k = (u - _BL_FLASH) / (_BL_BOOM - _BL_FLASH)
+        e = _snap(min(1.0, k / 0.25), 0.3) if k < 0.25 else max(0.4, 1.0 - k)
+        decay = max(0.0, 1.0 - k)
+        return (7.0 * math.sin(k * 55) * decay, -26.0 * e,
+                10.0 * math.sin(k * 47) * decay)
+    k = (u - _BL_BOOM) / max(1e-6, 1.0 - _BL_BOOM)
+    ease = _smooth(k)
+    sway = math.sin(k * 3) * (1.0 - ease) * 3.0
+    return (sway, -8.0 * (1.0 - ease), sway * 0.6)
+
+
 PRIMITIVES: dict[str, tuple[float, callable]] = {
     "nod":         (0.9, _nod),
     "shake":       (1.1, _shake),
@@ -144,6 +218,9 @@ PRIMITIVES: dict[str, tuple[float, callable]] = {
     "lean_in":     (2.0, _lean_in),
     "throwback":   (1.4, _throwback),
     "sneeze":      (1.3, _sneeze),
+    "recoil":      (0.4, _recoil),
+    "impact_slam": (_P3D.CYCLE, _impact_slam),
+    "kaboom":      (_BL.CYCLE, _kaboom),
 }
 
 
