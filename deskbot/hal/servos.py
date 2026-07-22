@@ -94,10 +94,10 @@ class Pca9685Servos:
 
         pip install adafruit-circuitpython-servokit   # on the Pi
 
-    Channel map: 0 = yaw, 1 = pitch, 2 = roll.
+    Channel map: 0 = roll, 1 = pitch, 2 = yaw.
     """
 
-    CHANNELS = {"yaw": 0, "pitch": 1, "roll": 2}
+    CHANNELS = {"yaw": 2, "pitch": 1, "roll": 0}
 
     def __init__(self, address: int = 0x40):
         from adafruit_servokit import ServoKit
