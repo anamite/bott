@@ -130,12 +130,34 @@ def _sneeze(u):       # slow wind-up back... snap forward, settle
     return (0.0, p, 0.0)
 
 
-def _recoil(u):        # single quick gun-kick: fast backward snap, then a
-    # short damped ring before settling -- loop with cycles= for sustained
-    # gunfire (pairs with overlays.Pew, which fires bursts continuously)
-    e = _snap(u, 0.12)
-    ring = math.sin(u * 26) * max(0.0, u - 0.12) * 2.2
-    return (ring, -15.0 * e, 4.0 * math.sin(u * 20) * e)
+# recoil timing lifted from overlays.Pew so each servo kick lands on the exact
+# frame a round leaves the barrel. Pew fires bursts of BURST_SIZE rounds
+# PELLET_GAP apart, then waits BURST_GAP; its first burst starts after an
+# initial 0.35 s cooldown (Pew.__init__ sets burst_cd = 0.35).
+_PEW = overlays.Pew
+_PEW_LEAD = 0.35
+_PEW_PERIOD = _PEW.BURST_GAP + (_PEW.BURST_SIZE - 1) * _PEW.PELLET_GAP
+_PEW_BURSTS = 4
+_RECOIL_DUR = _PEW_LEAD + _PEW_BURSTS * _PEW_PERIOD  # whole gesture length
+
+
+def _recoil(u):        # machine-gun recoil synced to overlays.Pew: one sharp
+    # pitch-up snap per round with a quick eased return, so a 3-round burst
+    # reads as tat-tat-tat kicks, then the head settles during the gap before
+    # the next burst -- pure recoil, no idle bobbing
+    t = u * _RECOIL_DUR
+    pitch = 0.0
+    roll = 0.0
+    for i in range(_PEW_BURSTS):
+        bs = _PEW_LEAD + i * _PEW_PERIOD
+        for r in range(_PEW.BURST_SIZE):
+            td = t - (bs + r * _PEW.PELLET_GAP)
+            if td < 0.0:
+                continue
+            env = (1.0 - math.exp(-td / 0.010)) * math.exp(-td / 0.14)
+            pitch -= 7.0 * env                       # snap up/back per round
+            roll += 2.4 * math.sin(td * 40.0) * math.exp(-td / 0.14)
+    return (0.0, pitch, roll)
 
 
 # phase boundaries (fractions of u) lifted straight from overlays.Pew3D's own
@@ -218,7 +240,7 @@ PRIMITIVES: dict[str, tuple[float, callable]] = {
     "lean_in":     (2.0, _lean_in),
     "throwback":   (1.4, _throwback),
     "sneeze":      (1.3, _sneeze),
-    "recoil":      (0.4, _recoil),
+    "recoil":      (_RECOIL_DUR, _recoil),
     "impact_slam": (_P3D.CYCLE, _impact_slam),
     "kaboom":      (_BL.CYCLE, _kaboom),
 }

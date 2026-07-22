@@ -54,7 +54,7 @@ ACTS: dict[str, Act] = {
                      led=(200, 120, 40), led_period=3.0),
     "thumbs_up": Act(anim="thumbs_up", gesture="perk",
                      led=(60, 255, 90)),
-    "pew":       Act(anim="pew", gesture="recoil", cycles=8,
+    "pew":       Act(anim="pew", gesture="recoil",
                      led=(255, 220, 60), led_period=0.15, hold=0.3),
     "pew3d":     Act(anim="pew3d", gesture="impact_slam",
                      led=(60, 220, 255), hold=0.2),
