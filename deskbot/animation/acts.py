@@ -89,6 +89,28 @@ ACTS: dict[str, Act] = {
     "wiggle":    Act(expr="joy", gesture="wiggle",
                      led=(255, 120, 200)),
     "lookaround": Act(expr="neutral", gesture="scan", speed=0.8),
+
+    # -- cute quick acts: fast, snappy, small amplitude for charm not drama --
+    "boop":       Act(expr="happy", gesture="nod", amp=1.15, speed=1.8,
+                      led=(255, 200, 80), hold=0.15),
+    "peekaboo":   Act(expr="curious", gesture="double_tilt", amp=0.8,
+                      speed=1.6, led=(120, 220, 255), hold=0.2),
+    "eager":      Act(expr="surprised", gesture="perk", amp=1.1, speed=1.7,
+                      led=(255, 240, 120), hold=0.15),
+    "shy":        Act(expr="bored", gesture="tilt", amp=0.5, speed=1.5,
+                      led=(200, 140, 255), hold=0.3),
+    "aww":        Act(expr="love", gesture="sway", amp=0.8, speed=1.3,
+                      led=(255, 110, 170), led_period=0.9, hold=0.3),
+    "oopsie":     Act(expr="surprised", gesture="flinch", amp=0.9, speed=1.6,
+                      led=(255, 255, 255), hold=0.2),
+    "sleepy_nod": Act(expr="sleepy", gesture="droop", amp=0.8, speed=1.4,
+                      led=(160, 120, 60), led_period=2.0, hold=0.4),
+    "cheeky_wink": Act(expr="wink", gesture="tilt", amp=0.6, speed=1.6,
+                      led=(255, 180, 60), hold=0.25),
+    "wiggle_happy": Act(expr="joy", gesture="wiggle", amp=1.0, speed=1.5,
+                      led=(255, 140, 210), hold=0.15),
+    "huh":        Act(expr="skeptic", gesture="double_tilt", amp=0.7,
+                      speed=1.4, led=(180, 120, 255), hold=0.25),
 }
 
 

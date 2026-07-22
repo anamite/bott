@@ -41,8 +41,8 @@ def main():
     try:
         while True:
             now = time.monotonic()
-            dt = now - last
-            last = now
+            dt = min(now - last, 0.05)  # clamp: a slow I2C write must not
+            last = now                  # blow up the jelly-wobble spring
             t += dt
 
             if t >= next_expr_at:
