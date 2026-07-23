@@ -27,9 +27,9 @@ JOINTS = ("yaw", "pitch", "roll")
 # true center at 90, so logical 90 (bot looking straight ahead) maps to a raw
 # servo angle of 90 + offset. Measured with tools/calibrate_servos.py.
 ZERO_OFFSETS: dict[str, float] = {
-    "yaw":   -12.4,
-    "pitch": -40.0,   # TODO: recalibrate — true center is ~-55, was clamped
-    "roll":  -10.0,
+    "yaw":   -6.0,
+    "pitch": -86.0,
+    "roll":  -15.0,
 }
 
 
