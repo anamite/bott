@@ -24,9 +24,13 @@ import sys
 
 # --- import the project's servo config so we stay consistent -----------------
 sys.path.insert(0, __file__.rsplit("tools", 1)[0])
-from deskbot.hal.servos import JOINTS, NEUTRAL, SAFE_RANGES  # noqa: E402
+from deskbot.hal.servos import JOINTS, NEUTRAL  # noqa: E402
 
 CHANNELS = {"yaw": 2, "pitch": 1, "roll": 0}  # matches Pca9685Servos.CHANNELS
+
+# During calibration we allow the full physical servo travel so the true
+# center can be found even when it sits outside the logical SAFE_RANGES.
+PHYS_MIN, PHYS_MAX = 0.0, 180.0
 
 
 def _read_key() -> str:
@@ -62,7 +66,7 @@ def main() -> None:
 
     for joint in JOINTS:
         ch = CHANNELS[joint]
-        lo, hi = SAFE_RANGES[joint]
+        lo, hi = PHYS_MIN, PHYS_MAX
         angle = NEUTRAL
         kit.servo[ch].angle = angle
         print(f"\n>>> Calibrating {joint.upper()} (channel {ch}). "

@@ -23,6 +23,15 @@ SAFE_RANGES: dict[str, tuple[float, float]] = {
 NEUTRAL = 90.0
 JOINTS = ("yaw", "pitch", "roll")
 
+# Per-servo zero error, degrees. The 3D-printed horns don't seat with their
+# true center at 90, so logical 90 (bot looking straight ahead) maps to a raw
+# servo angle of 90 + offset. Measured with tools/calibrate_servos.py.
+ZERO_OFFSETS: dict[str, float] = {
+    "yaw":   -12.4,
+    "pitch": -40.0,   # TODO: recalibrate — true center is ~-55, was clamped
+    "roll":  -10.0,
+}
+
 
 def clamp(joint: str, angle: float) -> float:
     lo, hi = SAFE_RANGES[joint]
@@ -116,8 +125,10 @@ class Pca9685Servos:
             if val is None:
                 continue
             a = clamp(joint, val)
-            self.kit.servo[self.CHANNELS[joint]].angle = a
-            setattr(self.pose, joint, a)
+            # Apply the servo's zero error, then clamp to physical travel.
+            raw = max(0.0, min(180.0, a + ZERO_OFFSETS[joint]))
+            self.kit.servo[self.CHANNELS[joint]].angle = raw
+            setattr(self.pose, joint, a)  # store logical angle, not raw
         self.relaxed = False
 
     def relax(self):
